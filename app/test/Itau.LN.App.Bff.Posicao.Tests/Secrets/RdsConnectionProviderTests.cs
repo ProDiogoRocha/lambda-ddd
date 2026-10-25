@@ -1,51 +1,19 @@
-using System.Net;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
-using Itau.LN.App.Bff.Posicao.Infrastructure.Auth;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Options;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Secrets;
 using Microsoft.Extensions.Options;
 using MySqlConnector;
 using NSubstitute;
 
-namespace Itau.LN.App.Bff.Posicao.Tests;
+namespace Itau.LN.App.Bff.Posicao.Tests.Secrets;
 
-public class SecretsTests
+public class RdsConnectionProviderTests
 {
     private readonly IAmazonSecretsManager _secretsManager = Substitute.For<IAmazonSecretsManager>();
 
     [Fact]
-    public async Task AuthClient_ReusaTokenEmCacheERenovaAntesDeExpirar()
-    {
-        Secret("consumo-api", """{"client_id":"id","client_secret":"segredo"}""");
-        var http = new FakeHttpMessageHandler(
-            _ => FakeHttpMessageHandler.Json(HttpStatusCode.OK, """{"access_token":"abc","expires_in":120}"""));
-        var factory = Substitute.For<IHttpClientFactory>();
-        factory.CreateClient(Arg.Any<string>()).Returns(_ => new HttpClient(http));
-        var relogio = new RelogioManual();
-        var auth = new AuthClient(
-            factory,
-            _secretsManager,
-            Options.Create(new ApiOptions { AuthTokenUrl = "https://sts.local/oauth/token" }),
-            Options.Create(new SecretsOptions { ConsumoApi = "consumo-api" }),
-            relogio);
-
-        Assert.Equal("abc", await auth.GetTokenAsync(CancellationToken.None));
-        relogio.Agora += TimeSpan.FromSeconds(59);
-        await auth.GetTokenAsync(CancellationToken.None);
-
-        Assert.Equal("https://sts.local/oauth/token", Assert.Single(http.Requests).RequestUri!.AbsoluteUri);
-        Assert.Equal("client_id=id&client_secret=segredo&grant_type=client_credentials", Assert.Single(http.Bodies));
-
-        // expires_in 120 => renova 60s antes: aos 61s já busca outro token.
-        relogio.Agora += TimeSpan.FromSeconds(2);
-        await auth.GetTokenAsync(CancellationToken.None);
-
-        Assert.Equal(2, http.Requests.Count);
-    }
-
-    [Fact]
-    public async Task RdsConnectionProvider_AceitaSecretEmTextoPuroOuJsonEFazCache()
+    public async Task GetConnectionString_AceitaSecretEmTextoPuroOuJsonEFazCache()
     {
         Secret("rds-host", """{"host":"db.local"}""");
         Secret("rds-user", "admin");
@@ -70,7 +38,7 @@ public class SecretsTests
     }
 
     [Fact]
-    public async Task RdsConnectionProvider_JsonSemChaveEsperada_Falha()
+    public async Task GetConnectionString_JsonSemChaveEsperada_Falha()
     {
         Secret("rds-host", """{"outro":"valor"}""");
         var provider = new RdsConnectionProvider(_secretsManager, Options.Create(new RdsOptions { EndpointSecret = "rds-host" }));
@@ -78,11 +46,23 @@ public class SecretsTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetConnectionStringAsync(CancellationToken.None));
     }
 
-    private sealed class RelogioManual : TimeProvider
+    // Senha que começa com "{" não é JSON: vale o texto puro.
+    [Fact]
+    public async Task GetConnectionString_ComecaComChaveMasNaoEJson_UsaTextoPuro()
     {
-        public DateTimeOffset Agora { get; set; } = DateTimeOffset.UnixEpoch;
+        Secret("rds-host", "db.local");
+        Secret("rds-user", "admin");
+        Secret("rds-password", "{senha-sem-json");
+        var provider = new RdsConnectionProvider(_secretsManager, Options.Create(new RdsOptions
+        {
+            EndpointSecret = "rds-host",
+            UserSecret = "rds-user",
+            PasswordSecret = "rds-password"
+        }));
 
-        public override DateTimeOffset GetUtcNow() => Agora;
+        var connection = new MySqlConnectionStringBuilder(await provider.GetConnectionStringAsync(CancellationToken.None));
+
+        Assert.Equal("{senha-sem-json", connection.Password);
     }
 
     private void Secret(string name, string value) =>

@@ -15,7 +15,7 @@ using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 
-namespace Itau.LN.App.Bff.Posicao.Tests;
+namespace Itau.LN.App.Bff.Posicao.Tests.Handlers;
 
 public class BffRequestHandlerTests
 {
@@ -49,6 +49,17 @@ public class BffRequestHandlerTests
         Assert.Equal(
             """{"messages":[{"codigo":"400","mensagem":"Headers obrigatorios ausentes: x-itau-apikey e x-itau-correlationID."}]}""",
             response.Body);
+    }
+
+    [Fact]
+    public async Task SemNenhumHeader_Retorna400()
+    {
+        var request = Request("GET", "/v1/posicao-transportadores");
+        request.Headers = null;
+
+        var response = await HandleAsync(request);
+
+        Assert.Equal(400, response.StatusCode);
     }
 
     [Theory]
@@ -192,7 +203,9 @@ public class BffRequestHandlerTests
     [InlineData("POST", "/v1/posicao-transportadores//reverter")]
     [InlineData("GET", "/v1/POSICAO-TRANSPORTADORES")]
     [InlineData("GET", "/v1/centralizadores/10/polos/..")]
-    public async Task RotaInexistente_Retorna404SemConsultarAsApis(string method, string path)
+    [InlineData(null, "/v1/posicao-transportadores")]
+    [InlineData("GET", null)]
+    public async Task RotaInexistente_Retorna404SemConsultarAsApis(string? method, string? path)
     {
         var response = await HandleAsync(Request(method, path, new Dictionary<string, string> { ["transportadora"] = "TRANSP" }));
 
@@ -310,8 +323,8 @@ public class BffRequestHandlerTests
     }
 
     private static APIGatewayProxyRequest Request(
-        string method,
-        string path,
+        string? method,
+        string? path,
         Dictionary<string, string>? query = null,
         string? body = null,
         Dictionary<string, string>? headers = null) => new()

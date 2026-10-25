@@ -8,10 +8,11 @@ using Itau.LN.App.Bff.Posicao.Infrastructure.Auth;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Clients;
 using Itau.LN.App.Bff.Posicao.Lambda.Handlers;
 using Itau.LN.App.Bff.Posicao.Lambda.Options;
+using Itau.LN.App.Bff.Posicao.Tests.Fakes;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 
-namespace Itau.LN.App.Bff.Posicao.Tests;
+namespace Itau.LN.App.Bff.Posicao.Tests.Handlers;
 
 // Handler, serviço e client HTTP reais: só o banco, o token e o backend são falsos.
 public class ChaveUnicaPontaAPontaTests

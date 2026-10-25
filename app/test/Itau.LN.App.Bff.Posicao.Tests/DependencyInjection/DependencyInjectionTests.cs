@@ -5,7 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
-namespace Itau.LN.App.Bff.Posicao.Tests;
+namespace Itau.LN.App.Bff.Posicao.Tests.DependencyInjection;
 
 public class DependencyInjectionTests
 {

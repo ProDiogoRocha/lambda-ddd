@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text;
 
-namespace Itau.LN.App.Bff.Posicao.Tests;
+namespace Itau.LN.App.Bff.Posicao.Tests.Fakes;
 
 // NSubstitute não intercepta HttpMessageHandler.SendAsync (protected); este fake grava as requisições e devolve a resposta configurada.
 internal sealed class FakeHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler

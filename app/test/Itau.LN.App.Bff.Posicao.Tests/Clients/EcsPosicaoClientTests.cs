@@ -4,17 +4,18 @@ using Itau.LN.App.Bff.Posicao.Application.Contracts.Ecs;
 using Itau.LN.App.Bff.Posicao.Application.Exceptions;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Auth;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Clients;
+using Itau.LN.App.Bff.Posicao.Tests.Fakes;
 using NSubstitute;
 
-namespace Itau.LN.App.Bff.Posicao.Tests;
+namespace Itau.LN.App.Bff.Posicao.Tests.Clients;
 
-public class ApiClientsTests
+public class EcsPosicaoClientTests
 {
     private static readonly ApiRequestHeaders Headers = new("api-key", "corr-id", "chave");
 
     private readonly IAuthClient _auth = Substitute.For<IAuthClient>();
 
-    public ApiClientsTests() => _auth.GetTokenAsync(Arg.Any<CancellationToken>()).Returns("token-123");
+    public EcsPosicaoClientTests() => _auth.GetTokenAsync(Arg.Any<CancellationToken>()).Returns("token-123");
 
     [Fact]
     public async Task Get_EnviaTokenEHeadersEDesembrulhaData()
@@ -47,10 +48,12 @@ public class ApiClientsTests
         Assert.False(Assert.Single(http.Requests).Headers.Contains("chave-unica"));
     }
 
-    [Fact]
-    public async Task Get_SemCampoData_LancaErro500()
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("<html>OK</html>")]
+    public async Task Get_SemCampoData_LancaErro500(string body)
     {
-        var client = new EcsPosicaoClient(CriarHttpClient(Responder(HttpStatusCode.OK, "{}")), _auth);
+        var client = new EcsPosicaoClient(CriarHttpClient(Responder(HttpStatusCode.OK, body)), _auth);
 
         var ex = await Assert.ThrowsAsync<ApiHttpException>(
             () => client.GetHistoricoDetalheAsync("IDX", Headers, CancellationToken.None));
@@ -85,23 +88,6 @@ public class ApiClientsTests
 
         Assert.Equal(HttpMethod.Post, Assert.Single(http.Requests).Method);
         Assert.Equal("""{"indiceControlePosicao":"IDX","codigoTipoPosicao":"F"}""", Assert.Single(http.Bodies));
-    }
-
-    [Fact]
-    public async Task Centralizadores_EscapaSegmentosEDesserializaRegistros()
-    {
-        var http = Responder(
-            HttpStatusCode.OK,
-            """{"data":{"totalRegistros":"1","registros":[{"codigoCentralizador":"10","nomeBaseFornecedor":"Base"}]}}""");
-        var client = new CentralizadoresClient(CriarHttpClient(http), _auth);
-
-        var response = await client.GetFornecedorInBaseAsync("10", "F 1", "B?2", Headers, CancellationToken.None);
-
-        Assert.Equal(
-            "https://api.local/base/centralizadores/10/fornecedores/F%201/bases/B%3F2",
-            Assert.Single(http.Requests).RequestUri!.AbsoluteUri);
-        Assert.Equal("1", response.TotalRegistros);
-        Assert.Equal("Base", Assert.Single(response.Registros!).NomeBaseFornecedor);
     }
 
     private static FakeHttpMessageHandler Responder(HttpStatusCode statusCode, string body) =>
