@@ -17,7 +17,7 @@ public class ModelosDeDominioTests
     }
 
     [Fact]
-    public void With_AlteraSoOCampoInformadoESemMexerNoOriginal()
+    public void With_AlteraSoOCampoInformadoSemMexerNoOriginal()
     {
         var original = new Resumo(1m, 2m, 3m, 4m);
 

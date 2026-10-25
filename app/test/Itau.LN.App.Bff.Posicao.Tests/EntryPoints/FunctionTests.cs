@@ -21,7 +21,7 @@ public class FunctionTests
     [Theory]
     [InlineData(30)]
     [InlineData(0)]
-    public async Task FunctionHandler_EncaminhaParaOHandler(int segundosRestantes)
+    public async Task FunctionHandler_ComOuSemTempoRestante_EncaminhaParaOHandler(int segundosRestantes)
     {
         var context = Substitute.For<ILambdaContext>();
         context.RemainingTime.Returns(TimeSpan.FromSeconds(segundosRestantes));

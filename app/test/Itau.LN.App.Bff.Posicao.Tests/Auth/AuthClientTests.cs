@@ -11,6 +11,8 @@ namespace Itau.LN.App.Bff.Posicao.Tests.Auth;
 
 public class AuthClientTests
 {
+    private const string TokenValido = """{"access_token":"abc","expires_in":120}""";
+
     private readonly IAmazonSecretsManager _secretsManager = Substitute.For<IAmazonSecretsManager>();
     private readonly RelogioManual _relogio = new();
 
@@ -19,18 +21,20 @@ public class AuthClientTests
     [Fact]
     public async Task GetToken_ReusaTokenEmCacheERenovaAntesDeExpirar()
     {
-        var http = Sts(HttpStatusCode.OK, """{"access_token":"abc","expires_in":120}""");
+        var http = FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, TokenValido);
         var auth = CriarAuthClient(http);
 
         Assert.Equal("abc", await auth.GetTokenAsync(CancellationToken.None));
         _relogio.Agora += TimeSpan.FromSeconds(59);
         await auth.GetTokenAsync(CancellationToken.None);
 
-        Assert.Equal("https://sts.local/oauth/token", Assert.Single(http.Requests).RequestUri!.AbsoluteUri);
+        var request = Assert.Single(http.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("https://sts.local/oauth/token", request.RequestUri!.AbsoluteUri);
         Assert.Equal("client_id=id&client_secret=segredo&grant_type=client_credentials", Assert.Single(http.Bodies));
 
-        // expires_in 120 => renova 60s antes: aos 61s já busca outro token.
-        _relogio.Agora += TimeSpan.FromSeconds(2);
+        // expires_in 120 => renova 60s antes: aos 60s já busca outro token.
+        _relogio.Agora += TimeSpan.FromSeconds(1);
         await auth.GetTokenAsync(CancellationToken.None);
 
         Assert.Equal(2, http.Requests.Count);
@@ -39,7 +43,7 @@ public class AuthClientTests
     [Fact]
     public async Task GetToken_ComExpiracaoCurta_RenovaNaMetadeDaValidade()
     {
-        var http = Sts(HttpStatusCode.OK, """{"access_token":"abc","expires_in":40}""");
+        var http = FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, """{"access_token":"abc","expires_in":40}""");
         var auth = CriarAuthClient(http);
 
         await auth.GetTokenAsync(CancellationToken.None);
@@ -52,11 +56,27 @@ public class AuthClientTests
         Assert.Equal(2, http.Requests.Count);
     }
 
+    // As 4 consultas de detalhe em paralelo podem pedir token ao mesmo tempo: só uma vai ao STS.
+    [Fact]
+    public async Task GetToken_ChamadasSimultaneas_BuscamUmUnicoToken()
+    {
+        var http = new FakeHttpMessageHandler(_ =>
+        {
+            Thread.Sleep(50);
+            return FakeHttpMessageHandler.Json(HttpStatusCode.OK, TokenValido);
+        });
+        var auth = CriarAuthClient(http);
+
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(() => auth.GetTokenAsync(CancellationToken.None))));
+
+        Assert.Single(http.Requests);
+    }
+
     [Fact]
     public async Task GetToken_ComSecretNula_Falha()
     {
         Secret("null");
-        var auth = CriarAuthClient(Sts(HttpStatusCode.OK, """{"access_token":"abc","expires_in":120}"""));
+        var auth = CriarAuthClient(FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, TokenValido));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => auth.GetTokenAsync(CancellationToken.None));
 
@@ -69,7 +89,7 @@ public class AuthClientTests
     [InlineData("null")]
     public async Task GetToken_SemAccessToken_Falha(string resposta)
     {
-        var auth = CriarAuthClient(Sts(HttpStatusCode.OK, resposta));
+        var auth = CriarAuthClient(FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, resposta));
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => auth.GetTokenAsync(CancellationToken.None));
 
@@ -77,11 +97,11 @@ public class AuthClientTests
     }
 
     [Fact]
-    public async Task GetToken_ComErroNoSts_PropagaENaoGuardaToken()
+    public async Task GetToken_ComErroNoSts_PropagaEPermiteNovaTentativa()
     {
         var respostas = new Queue<HttpResponseMessage>([
             FakeHttpMessageHandler.Json(HttpStatusCode.Unauthorized, "{}"),
-            FakeHttpMessageHandler.Json(HttpStatusCode.OK, """{"access_token":"abc","expires_in":120}""")]);
+            FakeHttpMessageHandler.Json(HttpStatusCode.OK, TokenValido)]);
         var auth = CriarAuthClient(new FakeHttpMessageHandler(_ => respostas.Dequeue()));
 
         await Assert.ThrowsAsync<HttpRequestException>(() => auth.GetTokenAsync(CancellationToken.None));
@@ -101,9 +121,6 @@ public class AuthClientTests
             Options.Create(new SecretsOptions { ConsumoApi = "consumo-api" }),
             _relogio);
     }
-
-    private static FakeHttpMessageHandler Sts(HttpStatusCode statusCode, string body) =>
-        new(_ => FakeHttpMessageHandler.Json(statusCode, body));
 
     private void Secret(string value) =>
         _secretsManager

@@ -20,7 +20,7 @@ public class EcsPosicaoClientTests
     [Fact]
     public async Task Get_EnviaTokenEHeadersEDesembrulhaData()
     {
-        var http = Responder(HttpStatusCode.OK, """{"data":{"numeroPosicao":"7","valorDivergenciaBloco":10.5}}""");
+        var http = FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, """{"data":{"numeroPosicao":"7","valorDivergenciaBloco":10.5}}""");
         var client = new EcsPosicaoClient(CriarHttpClient(http), _auth);
 
         var detalhe = await client.GetHistoricoDetalheAsync("A B", Headers, CancellationToken.None);
@@ -38,14 +38,41 @@ public class EcsPosicaoClientTests
     }
 
     [Fact]
-    public async Task Get_SemChaveUnica_NaoEnviaHeader()
+    public async Task GetLista_SemChaveUnica_ConsultaPelaDataSemEnviarHeader()
     {
-        var http = Responder(HttpStatusCode.OK, """{"data":{"ocorrencias":[]}}""");
+        var http = FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, """{"data":{"ocorrencias":[]}}""");
         var client = new EcsPosicaoClient(CriarHttpClient(http), _auth);
 
         await client.GetHistoricosListaAsync("2026-10-25", Headers with { ChaveUnica = "" }, CancellationToken.None);
 
-        Assert.False(Assert.Single(http.Requests).Headers.Contains("chave-unica"));
+        var request = Assert.Single(http.Requests);
+        Assert.False(request.Headers.Contains("chave-unica"));
+        Assert.Equal(
+            "https://api.local/base/posicaonumerarionacional/v2/custodias-posicoes-historicos-listas-consultar?dataMovimento=2026-10-25",
+            request.RequestUri!.AbsoluteUri);
+    }
+
+    // Os testes de handler e mapper montam os records por posição; aqui o nome de cada campo do ECS fica fixado.
+    [Fact]
+    public async Task GetLista_DesserializaTodosOsCamposDaOcorrencia()
+    {
+        var http = FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, """{"data":{"ocorrencias":[{"indiceControlePosicao":"IDX","descricaoPosicao":"Tipo","descricaoSituacaoPosicao":"Fechada","valorSaldoAnteriorComposicao":1,"valorSaldoAtualComposicao":2,"dataCadastro":"2026-10-25","horaCadastro":"10:00"}]}}""");
+
+        var lista = await new EcsPosicaoClient(CriarHttpClient(http), _auth).GetHistoricosListaAsync("2026-10-25", Headers, CancellationToken.None);
+
+        Assert.Equal(new EcsHistoricoListaOcorrencia("IDX", "Tipo", "Fechada", 1m, 2m, "2026-10-25", "10:00"), Assert.Single(lista.Ocorrencias!));
+    }
+
+    [Fact]
+    public async Task GetDetalhe_DesserializaBlocosCedulasEMoedas()
+    {
+        var http = FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, """{"data":{"numeroPosicao":"P1","blocoOcorrenciaLista":[{"descricaoItemBloco":"B","valorEntradaItemBloco":1,"valorDivergenciaEntradaBloco":2,"valorSaidaItemBloco":3,"valorDivergenciaSaidaBloco":4}],"cedulasOcorrenciaLista":[{"codigoClassificacaoCedula":"C","valorFaceCedula":100,"valorInformadoCedula":5,"valorDivergenciaItemCedula":6}],"moedasOcorrenciaLista":[{"codigoClassificacaoMoeda":"M","valorFaceMoeda":1,"valorInformadoMoeda":7,"valorDivergenciaItemMoeda":8}]}}""");
+
+        var detalhe = await new EcsPosicaoClient(CriarHttpClient(http), _auth).GetHistoricoDetalheAsync("IDX", Headers, CancellationToken.None);
+
+        Assert.Equal(new EcsBlocoOcorrencia("B", 1m, 2m, 3m, 4m), Assert.Single(detalhe.BlocoOcorrenciaLista!));
+        Assert.Equal(new EcsCedulaOcorrencia("C", 100m, 5m, 6m), Assert.Single(detalhe.CedulasOcorrenciaLista!));
+        Assert.Equal(new EcsMoedaOcorrencia("M", 1m, 7m, 8m), Assert.Single(detalhe.MoedasOcorrenciaLista!));
     }
 
     [Theory]
@@ -53,7 +80,7 @@ public class EcsPosicaoClientTests
     [InlineData("<html>OK</html>")]
     public async Task Get_SemCampoData_LancaErro500(string body)
     {
-        var client = new EcsPosicaoClient(CriarHttpClient(Responder(HttpStatusCode.OK, body)), _auth);
+        var client = new EcsPosicaoClient(CriarHttpClient(FakeHttpMessageHandler.Respondendo(HttpStatusCode.OK, body)), _auth);
 
         var ex = await Assert.ThrowsAsync<ApiHttpException>(
             () => client.GetHistoricoDetalheAsync("IDX", Headers, CancellationToken.None));
@@ -69,7 +96,7 @@ public class EcsPosicaoClientTests
     [InlineData("", "Erro HTTP 502")]
     public async Task ErroHttp_LancaApiHttpExceptionComStatusEMensagem(string body, string mensagem)
     {
-        var client = new EcsPosicaoClient(CriarHttpClient(Responder(HttpStatusCode.BadGateway, body)), _auth);
+        var client = new EcsPosicaoClient(CriarHttpClient(FakeHttpMessageHandler.Respondendo(HttpStatusCode.BadGateway, body)), _auth);
 
         var ex = await Assert.ThrowsAsync<ApiHttpException>(
             () => client.GetHistoricoDetalheAsync("IDX", Headers, CancellationToken.None));
@@ -86,12 +113,11 @@ public class EcsPosicaoClientTests
 
         await client.CancelarPosicaoAsync(new EcsCancelarPosicaoRequest("IDX", "F"), Headers, CancellationToken.None);
 
-        Assert.Equal(HttpMethod.Post, Assert.Single(http.Requests).Method);
+        var request = Assert.Single(http.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("https://api.local/base/posicaonumerarionacional/v2/custodia-posicoes-cancelamento", request.RequestUri!.AbsoluteUri);
         Assert.Equal("""{"indiceControlePosicao":"IDX","codigoTipoPosicao":"F"}""", Assert.Single(http.Bodies));
     }
-
-    private static FakeHttpMessageHandler Responder(HttpStatusCode statusCode, string body) =>
-        new(_ => FakeHttpMessageHandler.Json(statusCode, body));
 
     private static HttpClient CriarHttpClient(FakeHttpMessageHandler handler) =>
         new(handler) { BaseAddress = new Uri("https://api.local/base/") };

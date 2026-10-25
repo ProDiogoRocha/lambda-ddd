@@ -13,6 +13,9 @@ internal sealed class FakeHttpMessageHandler(Func<HttpRequestMessage, HttpRespon
     public static HttpResponseMessage Json(HttpStatusCode statusCode, string json) =>
         new(statusCode) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
+    public static FakeHttpMessageHandler Respondendo(HttpStatusCode statusCode, string json) =>
+        new(_ => Json(statusCode, json));
+
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         Requests.Add(request);

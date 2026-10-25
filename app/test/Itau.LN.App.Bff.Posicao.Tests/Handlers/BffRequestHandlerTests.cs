@@ -25,11 +25,13 @@ public class BffRequestHandlerTests
     private readonly ICentralizadoresClient _centralizadores = Substitute.For<ICentralizadoresClient>();
     private readonly ICredenciaisRepository _credenciais = Substitute.For<ICredenciaisRepository>();
     private readonly ILambdaContext _context = Substitute.For<ILambdaContext>();
+    private readonly CancellationToken _token = new CancellationTokenSource().Token;
 
     [Theory]
     [InlineData(null, null)]
     [InlineData("api-key", null)]
     [InlineData(null, "corr-id")]
+    [InlineData(" ", "corr-id")]
     public async Task SemHeadersObrigatorios_Retorna400AntesDoRoteamento(string? apiKey, string? correlationId)
     {
         var headers = new Dictionary<string, string>();
@@ -52,7 +54,7 @@ public class BffRequestHandlerTests
     }
 
     [Fact]
-    public async Task SemNenhumHeader_Retorna400()
+    public async Task ComHeadersNulos_Retorna400()
     {
         var request = Request("GET", "/v1/posicao-transportadores");
         request.Headers = null;
@@ -60,6 +62,7 @@ public class BffRequestHandlerTests
         var response = await HandleAsync(request);
 
         Assert.Equal(400, response.StatusCode);
+        Assert.Equal("Headers obrigatorios ausentes: x-itau-apikey e x-itau-correlationID.", Mensagem(response));
     }
 
     [Theory]
@@ -86,8 +89,10 @@ public class BffRequestHandlerTests
     {
         _ecs.GetHistoricosListaAsync("2026-10-25", HeadersSemChave, Arg.Any<CancellationToken>())
             .Returns(new EcsHistoricoLista([Ocorrencia("A"), Ocorrencia("B")]));
-        _ecs.GetHistoricoDetalheAsync(Arg.Any<string>(), HeadersSemChave, Arg.Any<CancellationToken>())
-            .Returns(call => Detalhe($"posicao-{call.Arg<string>()}"));
+        // "A" responde depois de "B": a ordem dos cards tem que vir da lista, não de quem termina primeiro.
+        _ecs.GetHistoricoDetalheAsync("A", HeadersSemChave, Arg.Any<CancellationToken>())
+            .Returns(async _ => { await Task.Delay(50); return Detalhe("posicao-A"); });
+        _ecs.GetHistoricoDetalheAsync("B", HeadersSemChave, Arg.Any<CancellationToken>()).Returns(Detalhe("posicao-B"));
 
         var response = await HandleAsync(Request("GET", "/v1/posicao-transportadores", Data("2026-10-25")));
 
@@ -173,6 +178,18 @@ public class BffRequestHandlerTests
 
         Assert.Equal(200, response.StatusCode);
         Assert.Equal("""{"indiceControlePosicao":"IDX","justificativaTermoJuridico":"fechamento"}""", response.Body);
+    }
+
+    [Theory]
+    [InlineData("/v1", "/V1/posicao-transportadores/IDX/justificativa-termo-juridico")]
+    [InlineData("/api/v2", "/api/v2/posicao-transportadores/IDX/justificativa-termo-juridico")]
+    public async Task BasePath_VemDaConfiguracaoESaiSemDiferenciarCaixa(string apiBasePath, string path)
+    {
+        _ecs.GetHistoricoDetalheAsync("IDX", HeadersSemChave, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
+
+        var response = await HandleAsync(Request("GET", path), apiBasePath: apiBasePath);
+
+        Assert.Equal(200, response.StatusCode);
     }
 
     [Theory]
@@ -272,6 +289,7 @@ public class BffRequestHandlerTests
     [Theory]
     [InlineData("chave-do-header", "chave-do-header")]
     [InlineData(null, "chave-padrao")]
+    [InlineData(" ", "chave-padrao")]
     public async Task ChaveUnica_SemTransportadora_UsaHeaderEDepoisPadrao(string? header, string chaveEsperada)
     {
         var request = RequestTermo(transportadora: null);
@@ -283,7 +301,7 @@ public class BffRequestHandlerTests
         await HandleAsync(request, chaveUnicaPadrao: "chave-padrao");
 
         await _ecs.Received(1).GetHistoricoDetalheAsync(
-            "IDX", HeadersSemChave with { ChaveUnica = chaveEsperada }, Arg.Any<CancellationToken>());
+            "IDX", HeadersSemChave with { ChaveUnica = chaveEsperada }, _token);
         await _credenciais.DidNotReceiveWithAnyArgs().ObterChaveUnicaAsync(default!, default);
     }
 
@@ -311,15 +329,20 @@ public class BffRequestHandlerTests
     }
 
     private Task<APIGatewayProxyResponse> HandleAsync(
-        APIGatewayProxyRequest request, string? chaveUnicaPadrao = null, string? corsAllowedOrigin = null)
+        APIGatewayProxyRequest request, string? chaveUnicaPadrao = null, string? corsAllowedOrigin = null, string apiBasePath = "/v1")
     {
         var handler = new BffRequestHandler(
             new PosicaoTransportadorService(_ecs, Options.Create(new PosicaoOptions())),
             _centralizadores,
             _credenciais,
-            Options.Create(new BffOptions { ChaveUnicaPadrao = chaveUnicaPadrao, CorsAllowedOrigin = corsAllowedOrigin }));
+            Options.Create(new BffOptions
+            {
+                ApiBasePath = apiBasePath,
+                ChaveUnicaPadrao = chaveUnicaPadrao,
+                CorsAllowedOrigin = corsAllowedOrigin
+            }));
 
-        return handler.HandleAsync(request, _context, CancellationToken.None);
+        return handler.HandleAsync(request, _context, _token);
     }
 
     private static APIGatewayProxyRequest Request(
