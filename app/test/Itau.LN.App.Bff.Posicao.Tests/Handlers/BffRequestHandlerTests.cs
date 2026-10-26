@@ -20,12 +20,24 @@ namespace Itau.LN.App.Bff.Posicao.Tests.Handlers;
 public class BffRequestHandlerTests
 {
     private static readonly ApiRequestHeaders HeadersSemChave = new("api-key", "corr-id", string.Empty);
+    private static readonly ApiRequestHeaders HeadersPosicao = HeadersSemChave with { ChaveUnica = "chave-do-rds" };
 
     private readonly IEcsPosicaoClient _ecs = Substitute.For<IEcsPosicaoClient>();
     private readonly ICentralizadoresClient _centralizadores = Substitute.For<ICentralizadoresClient>();
     private readonly ICredenciaisRepository _credenciais = Substitute.For<ICredenciaisRepository>();
     private readonly ILambdaContext _context = Substitute.For<ILambdaContext>();
     private readonly CancellationToken _token = new CancellationTokenSource().Token;
+
+    private const string RotaTermo = "/v1/posicao-transportadores/IDX/justificativa-termo-juridico";
+
+    // Contexto padrão das rotas de posição (ver Contexto()): base B1 no polo 40, com chave no banco.
+    public BffRequestHandlerTests()
+    {
+        _centralizadores.GetFornecedorAsync("10", "TRANSP", HeadersSemChave, Arg.Any<CancellationToken>())
+            .Returns(new CentralizadorResponse("1", [
+                new("10", "TRANSP", "B1", null, "40", null, null, null, null, null, null, null, null, null, null, null)]));
+        _credenciais.ObterChaveUnicaAsync("TRANSP", "B1", Arg.Any<CancellationToken>()).Returns("chave-do-rds");
+    }
 
     [Theory]
     [InlineData(null, null)]
@@ -69,9 +81,9 @@ public class BffRequestHandlerTests
     [InlineData(null, "Parametro obrigatorio ausente: data.")]
     [InlineData(" ", "Parametro obrigatorio ausente: data.")]
     [InlineData("25/10/2026", "Parametro data invalido. Utilize o formato yyyy-MM-dd.")]
-    public async Task ConsultarCards_ComDataAusenteOuInvalida_Retorna400SemConsultarOBanco(string? data, string mensagem)
+    public async Task ConsultarCards_ComDataAusenteOuInvalida_Retorna400SemBuscarAChave(string? data, string mensagem)
     {
-        var query = new Dictionary<string, string> { ["transportadora"] = "TRANSP" };
+        var query = Contexto();
         if (data is not null)
         {
             query["data"] = data;
@@ -81,18 +93,19 @@ public class BffRequestHandlerTests
 
         Assert.Equal(400, response.StatusCode);
         Assert.Equal(mensagem, Mensagem(response));
-        await _credenciais.DidNotReceiveWithAnyArgs().ObterChaveUnicaAsync(default!, default);
+        Assert.Empty(_centralizadores.ReceivedCalls());
+        Assert.Empty(_credenciais.ReceivedCalls());
     }
 
     [Fact]
     public async Task ConsultarCards_MontaUmCardPorOcorrenciaNaOrdemDaLista()
     {
-        _ecs.GetHistoricosListaAsync("2026-10-25", HeadersSemChave, Arg.Any<CancellationToken>())
+        _ecs.GetHistoricosListaAsync("2026-10-25", HeadersPosicao, Arg.Any<CancellationToken>())
             .Returns(new EcsHistoricoLista([Ocorrencia("A"), Ocorrencia("B")]));
         // "A" responde depois de "B": a ordem dos cards tem que vir da lista, não de quem termina primeiro.
-        _ecs.GetHistoricoDetalheAsync("A", HeadersSemChave, Arg.Any<CancellationToken>())
+        _ecs.GetHistoricoDetalheAsync("A", HeadersPosicao, Arg.Any<CancellationToken>())
             .Returns(async _ => { await Task.Delay(50); return Detalhe("posicao-A"); });
-        _ecs.GetHistoricoDetalheAsync("B", HeadersSemChave, Arg.Any<CancellationToken>()).Returns(Detalhe("posicao-B"));
+        _ecs.GetHistoricoDetalheAsync("B", HeadersPosicao, Arg.Any<CancellationToken>()).Returns(Detalhe("posicao-B"));
 
         var response = await HandleAsync(Request("GET", "/v1/posicao-transportadores", Data("2026-10-25")));
 
@@ -101,7 +114,8 @@ public class BffRequestHandlerTests
         Assert.Equal(["A", "B"], cards.EnumerateArray().Select(card => card.GetProperty("indiceControlePosicao").GetString()));
         Assert.Equal("posicao-A", cards[0].GetProperty("posicao").GetString());
         Assert.Equal("NA", cards[0].GetProperty("operador").GetString());
-        await _credenciais.DidNotReceiveWithAnyArgs().ObterChaveUnicaAsync(default!, default);
+        // Uma ida ao banco por request, não uma por detalhe.
+        await _credenciais.Received(1).ObterChaveUnicaAsync("TRANSP", "B1", _token);
     }
 
     [Fact]
@@ -153,13 +167,13 @@ public class BffRequestHandlerTests
         Assert.Equal(200, response.StatusCode);
         Assert.Equal("""{"sucesso":true,"mensagem":"Reversao realizada com sucesso","indiceControlePosicao":"IDX"}""", response.Body);
         await _ecs.Received(1).CancelarPosicaoAsync(
-            new EcsCancelarPosicaoRequest("IDX", "F"), HeadersSemChave, Arg.Any<CancellationToken>());
+            new EcsCancelarPosicaoRequest("IDX", "F"), HeadersPosicao, Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task JustificativaDivergencias_MapeiaDetalheDoEcs()
     {
-        _ecs.GetHistoricoDetalheAsync("IDX", HeadersSemChave, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
+        _ecs.GetHistoricoDetalheAsync("IDX", HeadersPosicao, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
 
         var response = await HandleAsync(Request("GET", "/v1/posicao-transportadores/IDX/justificativa-divergencias"));
 
@@ -172,7 +186,7 @@ public class BffRequestHandlerTests
     [Fact]
     public async Task JustificativaTermoJuridico_SemBasePath_UsaJustificativaDeFechamento()
     {
-        _ecs.GetHistoricoDetalheAsync("IDX", HeadersSemChave, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
+        _ecs.GetHistoricoDetalheAsync("IDX", HeadersPosicao, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
 
         var response = await HandleAsync(Request("GET", "/posicao-transportadores/IDX/justificativa-termo-juridico"));
 
@@ -185,7 +199,7 @@ public class BffRequestHandlerTests
     [InlineData("/api/v2", "/api/v2/posicao-transportadores/IDX/justificativa-termo-juridico")]
     public async Task BasePath_VemDaConfiguracaoESaiSemDiferenciarCaixa(string apiBasePath, string path)
     {
-        _ecs.GetHistoricoDetalheAsync("IDX", HeadersSemChave, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
+        _ecs.GetHistoricoDetalheAsync("IDX", HeadersPosicao, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
 
         var response = await HandleAsync(Request("GET", path), apiBasePath: apiBasePath);
 
@@ -197,8 +211,9 @@ public class BffRequestHandlerTests
     [InlineData("/v1/centralizadores/10/fornecedores/20", "fornecedor")]
     [InlineData("/v1/centralizadores/10/fornecedores/20/bases/30", "base")]
     [InlineData("/v1/centralizadores/10/polos/40", "polo")]
-    public async Task Centralizadores_EncaminhaParaOMetodoDaRota(string path, string totalEsperado)
+    public async Task Centralizadores_EncaminhaParaOMetodoDaRotaSemChaveUnica(string path, string totalEsperado)
     {
+        // Mesmo com o contexto da posição (padrão do Request) e header chave-unica, centralizador não leva chave nem vai ao banco.
         _centralizadores.GetCentralizadorAsync("10", HeadersSemChave, Arg.Any<CancellationToken>())
             .Returns(new CentralizadorResponse("centralizador", []));
         _centralizadores.GetFornecedorAsync("10", "20", HeadersSemChave, Arg.Any<CancellationToken>())
@@ -207,11 +222,15 @@ public class BffRequestHandlerTests
             .Returns(new CentralizadorResponse("base", []));
         _centralizadores.GetPoloAsync("10", "40", HeadersSemChave, Arg.Any<CancellationToken>())
             .Returns(new CentralizadorResponse("polo", []));
+        var request = Request("GET", path);
+        request.Headers["chave-unica"] = "chave-do-header";
 
-        var response = await HandleAsync(Request("GET", path));
+        var response = await HandleAsync(request);
 
         Assert.Equal(200, response.StatusCode);
         Assert.Equal(totalEsperado, Json(response).GetProperty("totalRegistros").GetString());
+        Assert.Single(_centralizadores.ReceivedCalls());
+        Assert.Empty(_credenciais.ReceivedCalls());
     }
 
     [Theory]
@@ -224,11 +243,11 @@ public class BffRequestHandlerTests
     [InlineData("GET", null)]
     public async Task RotaInexistente_Retorna404SemConsultarAsApis(string? method, string? path)
     {
-        var response = await HandleAsync(Request(method, path, new Dictionary<string, string> { ["transportadora"] = "TRANSP" }));
+        var response = await HandleAsync(Request(method, path));
 
         Assert.Equal(404, response.StatusCode);
         Assert.Equal("""{"messages":[{"codigo":"404","mensagem":"Recurso inexistente."}]}""", response.Body);
-        await _credenciais.DidNotReceiveWithAnyArgs().ObterChaveUnicaAsync(default!, default);
+        Assert.Empty(_credenciais.ReceivedCalls());
         Assert.Empty(_centralizadores.ReceivedCalls());
     }
 
@@ -259,16 +278,12 @@ public class BffRequestHandlerTests
         Assert.Equal("Erro interno.", Mensagem(response));
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData(" ")]
-    public async Task ChaveUnica_ComTransportadoraSemChaveNoBanco_Retorna400SemChamarOEcs(string? chaveDoBanco)
+    [Fact]
+    public async Task ChaveUnica_SemChaveNoBanco_Retorna400SemChamarOEcs()
     {
-        _credenciais.ObterChaveUnicaAsync("SEM-CADASTRO", Arg.Any<CancellationToken>()).Returns(chaveDoBanco);
-        var request = RequestTermo("SEM-CADASTRO");
-        request.Headers["chave-unica"] = "chave-do-header";
+        _credenciais.ObterChaveUnicaAsync(default!, default!, default).ReturnsForAnyArgs((string?)null);
 
-        var response = await HandleAsync(request);
+        var response = await HandleAsync(Request("GET", RotaTermo));
 
         Assert.Equal(400, response.StatusCode);
         Assert.Equal("Chave de acesso nao cadastrada para a transportadora informada.", Mensagem(response));
@@ -278,31 +293,38 @@ public class BffRequestHandlerTests
     [Fact]
     public async Task ChaveUnica_ComFalhaNoBanco_Retorna500Generico()
     {
-        _credenciais.ObterChaveUnicaAsync(default!, default).ThrowsAsyncForAnyArgs(new InvalidOperationException("RDS fora"));
+        _credenciais.ObterChaveUnicaAsync(default!, default!, default).ThrowsAsyncForAnyArgs(new InvalidOperationException("RDS fora"));
 
-        var response = await HandleAsync(RequestTermo("TRANSP"));
+        var response = await HandleAsync(Request("GET", RotaTermo));
 
         Assert.Equal(500, response.StatusCode);
         Assert.Equal("Erro interno.", Mensagem(response));
     }
 
     [Theory]
-    [InlineData("chave-do-header", "chave-do-header")]
-    [InlineData(null, "chave-padrao")]
-    [InlineData(" ", "chave-padrao")]
-    public async Task ChaveUnica_SemTransportadora_UsaHeaderEDepoisPadrao(string? header, string chaveEsperada)
+    [InlineData("centralizador", null)]
+    [InlineData("polo", null)]
+    [InlineData("transportadora", null)]
+    [InlineData("transportadora", " ")]
+    public async Task ChaveUnica_PosicaoSemContextoCompleto_Retorna400IgnorandoOHeader(string parametro, string? valor)
     {
-        var request = RequestTermo(transportadora: null);
-        if (header is not null)
+        var query = Contexto();
+        query.Remove(parametro);
+        if (valor is not null)
         {
-            request.Headers["chave-unica"] = header;
+            query[parametro] = valor;
         }
 
-        await HandleAsync(request, chaveUnicaPadrao: "chave-padrao");
+        var request = Request("GET", RotaTermo, query);
+        request.Headers["chave-unica"] = "chave-do-header";
 
-        await _ecs.Received(1).GetHistoricoDetalheAsync(
-            "IDX", HeadersSemChave with { ChaveUnica = chaveEsperada }, _token);
-        await _credenciais.DidNotReceiveWithAnyArgs().ObterChaveUnicaAsync(default!, default);
+        var response = await HandleAsync(request);
+
+        Assert.Equal(400, response.StatusCode);
+        Assert.Equal("Parametros obrigatorios ausentes: centralizador, polo e transportadora.", Mensagem(response));
+        Assert.Empty(_ecs.ReceivedCalls());
+        Assert.Empty(_centralizadores.ReceivedCalls());
+        Assert.Empty(_credenciais.ReceivedCalls());
     }
 
     [Fact]
@@ -329,16 +351,15 @@ public class BffRequestHandlerTests
     }
 
     private Task<APIGatewayProxyResponse> HandleAsync(
-        APIGatewayProxyRequest request, string? chaveUnicaPadrao = null, string? corsAllowedOrigin = null, string apiBasePath = "/v1")
+        APIGatewayProxyRequest request, string? corsAllowedOrigin = null, string apiBasePath = "/v1")
     {
         var handler = new BffRequestHandler(
             new PosicaoTransportadorService(_ecs, Options.Create(new PosicaoOptions())),
             _centralizadores,
-            _credenciais,
+            new ChaveUnicaService(_centralizadores, _credenciais),
             Options.Create(new BffOptions
             {
                 ApiBasePath = apiBasePath,
-                ChaveUnicaPadrao = chaveUnicaPadrao,
                 CorsAllowedOrigin = corsAllowedOrigin
             }));
 
@@ -354,18 +375,17 @@ public class BffRequestHandlerTests
         {
             HttpMethod = method,
             Path = path,
-            QueryStringParameters = query,
+            QueryStringParameters = query ?? Contexto(),
             Body = body,
             // Caixa diferente de propósito: a busca de header não diferencia maiúsculas.
             Headers = headers ?? new() { ["X-Itau-ApiKey"] = "api-key", ["x-itau-correlationid"] = "corr-id" }
         };
 
-    private static APIGatewayProxyRequest RequestTermo(string? transportadora) => Request(
-        "GET",
-        "/v1/posicao-transportadores/IDX/justificativa-termo-juridico",
-        transportadora is null ? null : new Dictionary<string, string> { ["transportadora"] = transportadora });
+    // Query que as rotas de posição recebem para achar a chave-unica (ver construtor).
+    private static Dictionary<string, string> Contexto() =>
+        new() { ["centralizador"] = "10", ["polo"] = "40", ["transportadora"] = "TRANSP" };
 
-    private static Dictionary<string, string> Data(string data) => new() { ["data"] = data };
+    private static Dictionary<string, string> Data(string data) => new(Contexto()) { ["data"] = data };
 
     private static JsonElement Json(APIGatewayProxyResponse response) => JsonDocument.Parse(response.Body).RootElement;
 

@@ -22,6 +22,6 @@ public class CredenciaisRepositoryTests
             new RdsConnectionProvider(secretsManager, Options.Create(new RdsOptions { Port = 1 })));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => repository.ObterChaveUnicaAsync("TRANSP", new CancellationToken(canceled: true)));
+            () => repository.ObterChaveUnicaAsync("TRANSP", "B1", new CancellationToken(canceled: true)));
     }
 }

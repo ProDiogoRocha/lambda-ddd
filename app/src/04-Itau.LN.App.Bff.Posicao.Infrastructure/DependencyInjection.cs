@@ -17,7 +17,7 @@ public static class DependencyInjection
     {
         services.AddOptions<ApiOptions>().Bind(configuration).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<SecretsOptions>().Bind(configuration.GetSection("Secrets")).ValidateDataAnnotations().ValidateOnStart();
-        // Sem ValidateOnStart: o RDS só é usado quando a rota recebe ?transportadora=.
+        // Sem ValidateOnStart: só as rotas de posição usam o RDS.
         services.AddOptions<RdsOptions>().Bind(configuration.GetSection("RdsConfig")).ValidateDataAnnotations();
 
         services.AddSingleton<IAmazonSecretsManager>(_ => new AmazonSecretsManagerClient());

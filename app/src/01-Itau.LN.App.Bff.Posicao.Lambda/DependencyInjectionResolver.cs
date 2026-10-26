@@ -22,6 +22,7 @@ public static class DependencyInjectionResolver
         services.AddOptions<PosicaoOptions>().Bind(configuration);
         services.AddOptions<BffOptions>().Bind(configuration);
         services.AddScoped<PosicaoTransportadorService>();
+        services.AddScoped<ChaveUnicaService>();
         services.AddScoped<BffRequestHandler>();
 
         var provider = services.BuildServiceProvider(new ServiceProviderOptions

@@ -74,8 +74,8 @@ Compile a cada projeto (`dotnet build`), assim um erro de digitação aparece lo
 - Os detalhes dos cards são buscados com até 4 chamadas simultâneas, mantendo a ordem.
 - Rotas novas: `GET /centralizadores/...` (4 rotas). Já estão no OpenAPI do ApiGateway-Posicao.
 - Com a env `CORS_ALLOWED_ORIGIN`, toda resposta leva `Access-Control-Allow-Origin`: o front chama o API Gateway de outro domínio e, na integração proxy, o header precisa sair da Lambda.
-- `?transportadora=` em qualquer rota busca a chave-unica no banco. Sem chave cadastrada, a resposta é 400 "Chave de acesso nao cadastrada para a transportadora informada.", sem fallback para o header ou a env, para nunca usar a chave de outra transportadora. Sem `transportadora`, vale o header `chave-unica` e depois a env `ECS_CHAVE_UNICA`. O banco só é consultado depois que a rota casa e a entrada é validada.
-- Atenção: o handler original já lia `transportadora` no GET de cards (sem usar). Se o front já envia esse parâmetro, a consulta de cards agora passa pelo banco e responde 400 quando a transportadora não tem chave cadastrada.
+- A chave-unica não vem mais do front. As rotas de posição passaram a exigir `?centralizador=&polo=&transportadora=` (400 "Parametros obrigatorios ausentes: centralizador, polo e transportadora."). Com eles a Lambda busca a base da transportadora na API de centralizadores (fornecedor no centralizador, filtrado pelo polo) e lê a chave na `tbln052` por transportadora (`codtranu`) e base (`filtranu`), com o mesmo `INNER JOIN` na `tbln051` do cadastro de credenciais. Base não encontrada, mais de uma base no polo ou chave não cadastrada dão 400. O header `chave-unica` do front é ignorado e a env `ECS_CHAVE_UNICA` deixou de existir. Os centralizadores não recebem chave-unica nem consultam o banco. A busca só acontece depois que a rota casa e a entrada é validada.
+- Atenção: o handler original já lia `transportadora` no GET de cards (sem usar). O front agora precisa enviar também `centralizador` e `polo` em todas as rotas de posição, inclusive no `reverter` e nas justificativas.
 - `RdsConfig__ReaderEndpointSecret` foi removido, porque não entrava na connection string.
 
 ## Conferir no outro computador
@@ -85,4 +85,5 @@ Compile a cada projeto (`dotnet build`), assim um erro de digitação aparece lo
 - Para o banco, a Lambda precisa de VPC com acesso ao RDS e ao Secrets Manager.
 - Confira se o `x-itau-apikey` enviado ao ECS deve ser o do front (como está) ou o client_id do BFF.
 - Pasta `Services` (não fotografada): compare a lógica com o PosicaoTransportadorService daqui.
-- Segurança: a chave-unica e a transportadora vêm do front, então o front pode consultar outra transportadora. Isso já era assim; vale validar a transportadora do usuário autenticado.
+- Chave-unica (ChaveUnicaService): confira no front/OpenAPI do ApiGateway-Posicao os nomes `centralizador`, `polo` e `transportadora`, e se `codigoBaseFornecedor` e `codigoPoloCentralizador` da API de centralizadores vêm no mesmo formato de `filtranu` e do polo enviado (zeros à esquerda quebram a comparação).
+- Segurança: a transportadora vem do front, então o front pode consultar outra transportadora. Isso já era assim; vale validar a transportadora do usuário autenticado.

@@ -18,7 +18,7 @@ namespace Itau.LN.App.Bff.Posicao.Lambda.Handlers;
 public sealed class BffRequestHandler(
     PosicaoTransportadorService posicaoService,
     ICentralizadoresClient centralizadoresClient,
-    ICredenciaisRepository credenciaisRepository,
+    ChaveUnicaService chaveUnicaService,
     IOptions<BffOptions> options)
 {
     private const string PosicaoTransportadores = "posicao-transportadores";
@@ -36,27 +36,30 @@ public sealed class BffRequestHandler(
                 return Error(HttpStatusCode.BadRequest, "Headers obrigatorios ausentes: x-itau-apikey e x-itau-correlationID.");
             }
 
-            // Só resolvida depois que a rota casa e a entrada é validada: evita ida ao banco em 400/404.
-            Task<ApiRequestHeaders> Headers() => CriarHeadersAsync(request, apiKey, correlationId, cancellationToken);
+            // Centralizadores não recebem chave-unica.
+            var headers = new ApiRequestHeaders(apiKey, correlationId, string.Empty);
+
+            // Só resolvida depois que a rota casa e a entrada é validada: evita idas ao centralizador e ao banco em 400/404.
+            Task<ApiRequestHeaders> HeadersPosicao() => ComChaveUnicaAsync(request, headers, cancellationToken);
 
             return (request.HttpMethod?.ToUpperInvariant(), GetRouteSegments(request.Path)) switch
             {
                 ("GET", [PosicaoTransportadores]) =>
-                    await ConsultarCardsAsync(request, Headers, cancellationToken),
+                    await ConsultarCardsAsync(request, HeadersPosicao, cancellationToken),
                 ("POST", [PosicaoTransportadores, var indice, "reverter"]) =>
-                    await ReverterFechamentoAsync(indice, request.Body, Headers, cancellationToken),
+                    await ReverterFechamentoAsync(indice, request.Body, HeadersPosicao, cancellationToken),
                 ("GET", [PosicaoTransportadores, var indice, "justificativa-divergencias"]) =>
-                    Ok(await posicaoService.ConsultarDivergenciasAsync(indice, await Headers(), cancellationToken)),
+                    Ok(await posicaoService.ConsultarDivergenciasAsync(indice, await HeadersPosicao(), cancellationToken)),
                 ("GET", [PosicaoTransportadores, var indice, "justificativa-termo-juridico"]) =>
-                    Ok(await posicaoService.ConsultarTermoJuridicoAsync(indice, await Headers(), cancellationToken)),
+                    Ok(await posicaoService.ConsultarTermoJuridicoAsync(indice, await HeadersPosicao(), cancellationToken)),
                 ("GET", [Centralizadores, var numero]) =>
-                    Ok(await centralizadoresClient.GetCentralizadorAsync(numero, await Headers(), cancellationToken)),
+                    Ok(await centralizadoresClient.GetCentralizadorAsync(numero, headers, cancellationToken)),
                 ("GET", [Centralizadores, var numero, "fornecedores", var fornecedorId]) =>
-                    Ok(await centralizadoresClient.GetFornecedorAsync(numero, fornecedorId, await Headers(), cancellationToken)),
+                    Ok(await centralizadoresClient.GetFornecedorAsync(numero, fornecedorId, headers, cancellationToken)),
                 ("GET", [Centralizadores, var numero, "fornecedores", var fornecedorId, "bases", var baseId]) =>
-                    Ok(await centralizadoresClient.GetFornecedorInBaseAsync(numero, fornecedorId, baseId, await Headers(), cancellationToken)),
+                    Ok(await centralizadoresClient.GetFornecedorInBaseAsync(numero, fornecedorId, baseId, headers, cancellationToken)),
                 ("GET", [Centralizadores, var numero, "polos", var poloId]) =>
-                    Ok(await centralizadoresClient.GetPoloAsync(numero, poloId, await Headers(), cancellationToken)),
+                    Ok(await centralizadoresClient.GetPoloAsync(numero, poloId, headers, cancellationToken)),
                 _ => Error(HttpStatusCode.NotFound, "Recurso inexistente.")
             };
         }
@@ -107,23 +110,22 @@ public sealed class BffRequestHandler(
         return Ok(new ReverterFechamentoResponse(true, "Reversao realizada com sucesso", indiceControlePosicao));
     }
 
-    // Com ?transportadora= a chave vem do banco e é obrigatória: sem fallback, para nunca usar a chave de outra transportadora.
-    // Sem transportadora: header chave-unica, depois env ECS_CHAVE_UNICA.
-    private async Task<ApiRequestHeaders> CriarHeadersAsync(
-        APIGatewayProxyRequest request, string apiKey, string correlationId, CancellationToken cancellationToken)
+    // A chave-unica vem sempre do RDS, sem fallback; um header chave-unica do front é ignorado.
+    private async Task<ApiRequestHeaders> ComChaveUnicaAsync(
+        APIGatewayProxyRequest request, ApiRequestHeaders headers, CancellationToken cancellationToken)
     {
+        var centralizador = GetQueryParameter(request, "centralizador");
+        var polo = GetQueryParameter(request, "polo");
         var transportadora = GetQueryParameter(request, "transportadora");
-        if (string.IsNullOrWhiteSpace(transportadora))
+        if (string.IsNullOrWhiteSpace(centralizador) || string.IsNullOrWhiteSpace(polo) || string.IsNullOrWhiteSpace(transportadora))
         {
-            var chaveUnica = GetHeader(request, HeaderNames.ChaveUnica) ?? options.Value.ChaveUnicaPadrao ?? string.Empty;
-            return new ApiRequestHeaders(apiKey, correlationId, chaveUnica);
+            throw new ApiHttpException(HttpStatusCode.BadRequest, "Parametros obrigatorios ausentes: centralizador, polo e transportadora.");
         }
 
-        var chaveDoBanco = await credenciaisRepository.ObterChaveUnicaAsync(transportadora, cancellationToken);
-
-        return string.IsNullOrWhiteSpace(chaveDoBanco)
-            ? throw new ApiHttpException(HttpStatusCode.BadRequest, "Chave de acesso nao cadastrada para a transportadora informada.")
-            : new ApiRequestHeaders(apiKey, correlationId, chaveDoBanco);
+        return headers with
+        {
+            ChaveUnica = await chaveUnicaService.ObterAsync(centralizador, polo, transportadora, headers, cancellationToken)
+        };
     }
 
     // Remove o base path (ex.: /v1) e devolve os segmentos da rota.

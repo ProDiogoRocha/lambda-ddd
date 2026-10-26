@@ -31,9 +31,11 @@ tem que ser igual a ele.
 | GET | `/centralizadores/{numero}/fornecedores/{fornecedorId}/bases/{baseId}` | idem |
 | GET | `/centralizadores/{numero}/polos/{poloId}` | idem |
 
-`chave-unica` enviada às APIs (resolvida só depois que a rota casa e a entrada é validada):
-- com `?transportadora=` (qualquer rota): chave cadastrada no banco; sem cadastro => 400, sem fallback;
-- sem `transportadora`: header `chave-unica`, senão a env `ECS_CHAVE_UNICA`.
+`chave-unica` só vai para o ECS, nas rotas `/posicao-transportadores`, que exigem `?centralizador=&polo=&transportadora=`
+(400 se faltar algum). A Lambda busca a base da transportadora em `GET /centralizadores/{centralizador}/fornecedores/{transportadora}`
+filtrando pelo polo, e lê a chave na `tbln052` por `codtranu` = transportadora e `filtranu` = base. Base ausente, mais de uma
+base no polo ou chave não cadastrada => 400. Tudo isso só depois que a rota casa e a entrada é validada.
+Um header `chave-unica` enviado pelo front é ignorado. Os centralizadores nunca recebem `chave-unica`.
 
 Erros: `{ messages: [{ codigo, mensagem }] }`. 400/404 das APIs de destino são repassados; demais viram 500.
 Rotas com segmento `.` ou `..` dão 404.
@@ -48,10 +50,9 @@ Rotas com segmento `.` ou `..` dão 404.
 | `CENTRALIZADOR_TIMEOUT_SECONDS` | não (30) | timeout dos centralizadores |
 | `AUTH_TOKEN_URL` | sim | URL do token OAuth (client_credentials) |
 | `Secrets__ConsumoApi` | sim | secret com `client_id` e `client_secret` |
-| `RdsConfig__UserSecret`, `RdsConfig__PasswordSecret`, `RdsConfig__EndpointSecret` | só com `?transportadora=` | secrets do RDS (texto puro ou JSON) |
-| `RdsConfig__Database`, `RdsConfig__Port` | só com `?transportadora=` | banco e porta (3306) |
+| `RdsConfig__UserSecret`, `RdsConfig__PasswordSecret`, `RdsConfig__EndpointSecret` | nas rotas de posição | secrets do RDS (texto puro ou JSON) |
+| `RdsConfig__Database`, `RdsConfig__Port` | nas rotas de posição | banco e porta (3306) |
 | `API_BASE_PATH` | não (`/v1`) | base path removido da rota |
-| `ECS_CHAVE_UNICA` | não | chave-unica padrão |
 | `BFF_DEFAULT_OPERADOR` | não (`NA`) | operador exibido no card |
 | `CORS_ALLOWED_ORIGIN` | só com front em outro domínio | origem do front no header `Access-Control-Allow-Origin`; igual ao `cors_allowed_origin` do ApiGateway-Posicao |
 
