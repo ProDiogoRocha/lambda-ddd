@@ -20,23 +20,23 @@ namespace Itau.LN.App.Bff.Posicao.Tests.Handlers;
 public class BffRequestHandlerTests
 {
     private static readonly ApiRequestHeaders HeadersSemChave = new("api-key", "corr-id", string.Empty);
-    private static readonly ApiRequestHeaders HeadersPosicao = HeadersSemChave with { ChaveUnica = "chave-do-rds" };
+    private static readonly ApiRequestHeaders HeadersPosicao = HeadersSemChave with { ChaveUnica = "jwt-chave-unica" };
 
     private readonly IEcsPosicaoClient _ecs = Substitute.For<IEcsPosicaoClient>();
     private readonly ICentralizadoresClient _centralizadores = Substitute.For<ICentralizadoresClient>();
-    private readonly ICredenciaisRepository _credenciais = Substitute.For<ICredenciaisRepository>();
+    private readonly IChaveUnicaTokenGenerator _tokens = Substitute.For<IChaveUnicaTokenGenerator>();
     private readonly ILambdaContext _context = Substitute.For<ILambdaContext>();
     private readonly CancellationToken _token = new CancellationTokenSource().Token;
 
     private const string RotaTermo = "/v1/posicao-transportadores/IDX/justificativa-termo-juridico";
 
-    // Contexto padrão das rotas de posição (ver Contexto()): base B1 no polo 40, com chave no banco.
+    // Contexto padrão das rotas de posição (ver Contexto()): transportadora TRANSP com a base B1 no polo 40.
     public BffRequestHandlerTests()
     {
         _centralizadores.GetFornecedorAsync("10", "TRANSP", HeadersSemChave, Arg.Any<CancellationToken>())
             .Returns(new CentralizadorResponse("1", [
                 new("10", "TRANSP", "B1", null, "40", null, null, null, null, null, null, null, null, null, null, null)]));
-        _credenciais.ObterChaveUnicaAsync("TRANSP", "B1", Arg.Any<CancellationToken>()).Returns("chave-do-rds");
+        _tokens.GerarAsync("TRANSP", "B1", Arg.Any<CancellationToken>()).Returns("jwt-chave-unica");
     }
 
     [Theory]
@@ -94,7 +94,7 @@ public class BffRequestHandlerTests
         Assert.Equal(400, response.StatusCode);
         Assert.Equal(mensagem, Mensagem(response));
         Assert.Empty(_centralizadores.ReceivedCalls());
-        Assert.Empty(_credenciais.ReceivedCalls());
+        Assert.Empty(_tokens.ReceivedCalls());
     }
 
     [Fact]
@@ -114,8 +114,8 @@ public class BffRequestHandlerTests
         Assert.Equal(["A", "B"], cards.EnumerateArray().Select(card => card.GetProperty("indiceControlePosicao").GetString()));
         Assert.Equal("posicao-A", cards[0].GetProperty("posicao").GetString());
         Assert.Equal("NA", cards[0].GetProperty("operador").GetString());
-        // Uma ida ao banco por request, não uma por detalhe.
-        await _credenciais.Received(1).ObterChaveUnicaAsync("TRANSP", "B1", _token);
+        // Um JWT por request, não um por detalhe.
+        await _tokens.Received(1).GerarAsync("TRANSP", "B1", _token);
     }
 
     [Fact]
@@ -213,7 +213,7 @@ public class BffRequestHandlerTests
     [InlineData("/v1/centralizadores/10/polos/40", "polo")]
     public async Task Centralizadores_EncaminhaParaOMetodoDaRotaSemChaveUnica(string path, string totalEsperado)
     {
-        // Mesmo com o contexto da posição (padrão do Request) e header chave-unica, centralizador não leva chave nem vai ao banco.
+        // Mesmo com o contexto da posição (padrão do Request) e header chave-unica, centralizador não leva chave nem gera JWT.
         _centralizadores.GetCentralizadorAsync("10", HeadersSemChave, Arg.Any<CancellationToken>())
             .Returns(new CentralizadorResponse("centralizador", []));
         _centralizadores.GetFornecedorAsync("10", "20", HeadersSemChave, Arg.Any<CancellationToken>())
@@ -230,7 +230,7 @@ public class BffRequestHandlerTests
         Assert.Equal(200, response.StatusCode);
         Assert.Equal(totalEsperado, Json(response).GetProperty("totalRegistros").GetString());
         Assert.Single(_centralizadores.ReceivedCalls());
-        Assert.Empty(_credenciais.ReceivedCalls());
+        Assert.Empty(_tokens.ReceivedCalls());
     }
 
     [Theory]
@@ -247,7 +247,7 @@ public class BffRequestHandlerTests
 
         Assert.Equal(404, response.StatusCode);
         Assert.Equal("""{"messages":[{"codigo":"404","mensagem":"Recurso inexistente."}]}""", response.Body);
-        Assert.Empty(_credenciais.ReceivedCalls());
+        Assert.Empty(_tokens.ReceivedCalls());
         Assert.Empty(_centralizadores.ReceivedCalls());
     }
 
@@ -279,21 +279,23 @@ public class BffRequestHandlerTests
     }
 
     [Fact]
-    public async Task ChaveUnica_SemChaveNoBanco_Retorna400SemChamarOEcs()
+    public async Task ChaveUnica_SemBaseNoPolo_Retorna400SemChamarOEcs()
     {
-        _credenciais.ObterChaveUnicaAsync(default!, default!, default).ReturnsForAnyArgs((string?)null);
+        var query = Contexto();
+        query["polo"] = "99";
 
-        var response = await HandleAsync(Request("GET", RotaTermo));
+        var response = await HandleAsync(Request("GET", RotaTermo, query));
 
         Assert.Equal(400, response.StatusCode);
-        Assert.Equal("Chave de acesso nao cadastrada para a transportadora informada.", Mensagem(response));
+        Assert.Equal("Base da transportadora nao encontrada no centralizador e polo informados.", Mensagem(response));
         Assert.Empty(_ecs.ReceivedCalls());
+        Assert.Empty(_tokens.ReceivedCalls());
     }
 
     [Fact]
-    public async Task ChaveUnica_ComFalhaNoBanco_Retorna500Generico()
+    public async Task ChaveUnica_ComFalhaAoAssinarOJwt_Retorna500Generico()
     {
-        _credenciais.ObterChaveUnicaAsync(default!, default!, default).ThrowsAsyncForAnyArgs(new InvalidOperationException("RDS fora"));
+        _tokens.GerarAsync(default!, default!, default).ThrowsAsyncForAnyArgs(new InvalidOperationException("Secrets Manager fora"));
 
         var response = await HandleAsync(Request("GET", RotaTermo));
 
@@ -324,7 +326,7 @@ public class BffRequestHandlerTests
         Assert.Equal("Parametros obrigatorios ausentes: centralizador, polo e transportadora.", Mensagem(response));
         Assert.Empty(_ecs.ReceivedCalls());
         Assert.Empty(_centralizadores.ReceivedCalls());
-        Assert.Empty(_credenciais.ReceivedCalls());
+        Assert.Empty(_tokens.ReceivedCalls());
     }
 
     [Fact]
@@ -350,13 +352,61 @@ public class BffRequestHandlerTests
         Assert.False(response.Headers.ContainsKey("Access-Control-Allow-Origin"));
     }
 
+    [Fact]
+    public async Task Log_Sucesso_UmaLinhaInformationComOContextoESemCredenciais()
+    {
+        _ecs.GetHistoricoDetalheAsync("IDX", HeadersPosicao, Arg.Any<CancellationToken>()).Returns(Detalhe("1"));
+
+        await HandleAsync(Request("GET", RotaTermo));
+
+        var (nivel, campos) = LogUnico();
+        Assert.Equal("LogInformation", nivel);
+        Assert.Equal(["GET", RotaTermo, 200], campos[..3]);
+        Assert.Equal(["corr-id", "10", "40", "TRANSP"], campos[4..]);
+        Assert.DoesNotContain(campos, campo => campo is "api-key" or "jwt-chave-unica");
+    }
+
+    [Fact]
+    public async Task Log_ErroDeValidacao_WarningComOMotivo()
+    {
+        await HandleAsync(Request("GET", "/v1/posicao-transportadores", Data("25/10/2026")));
+
+        var (nivel, campos) = LogUnico();
+        Assert.Equal("LogWarning", nivel);
+        Assert.Equal(400, campos[2]);
+        Assert.Equal(["-", "-", "Parametro data invalido. Utilize o formato yyyy-MM-dd."], campos[8..]);
+    }
+
+    [Fact]
+    public async Task Log_ErroNaApiDeDestino_ErrorComAChamadaQueFalhouEAExcecao()
+    {
+        var falha = new ApiHttpException(HttpStatusCode.ServiceUnavailable, "ECS fora", "GET ecs.local/custodias-posicoes-historicos-detalhes-consultar");
+        _ecs.GetHistoricoDetalheAsync(default!, default!, default).ThrowsAsyncForAnyArgs(falha);
+
+        await HandleAsync(Request("GET", RotaTermo));
+
+        var chamada = Assert.Single(_context.Logger.ReceivedCalls());
+        Assert.Equal("LogError", chamada.GetMethodInfo().Name);
+        Assert.Same(falha, chamada.GetArguments()[0]);
+        Assert.Equal(
+            ["GET ecs.local/custodias-posicoes-historicos-detalhes-consultar", 503, "ECS fora"],
+            ((object[])chamada.GetArguments()[^1]!)[8..]);
+    }
+
+    // Exatamente um log por requisição: nome do método (nível) e os valores dos campos do template.
+    private (string Nivel, object[] Campos) LogUnico()
+    {
+        var chamada = Assert.Single(_context.Logger.ReceivedCalls());
+        return (chamada.GetMethodInfo().Name, (object[])chamada.GetArguments()[^1]!);
+    }
+
     private Task<APIGatewayProxyResponse> HandleAsync(
         APIGatewayProxyRequest request, string? corsAllowedOrigin = null, string apiBasePath = "/v1")
     {
         var handler = new BffRequestHandler(
             new PosicaoTransportadorService(_ecs, Options.Create(new PosicaoOptions())),
             _centralizadores,
-            new ChaveUnicaService(_centralizadores, _credenciais),
+            new ChaveUnicaService(_centralizadores, _tokens),
             Options.Create(new BffOptions
             {
                 ApiBasePath = apiBasePath,

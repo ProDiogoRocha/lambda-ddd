@@ -93,7 +93,7 @@ public class AuthClientTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => auth.GetTokenAsync(CancellationToken.None));
 
-        Assert.Equal("Token não retornado pela API.", ex.Message);
+        Assert.Equal("STS respondeu sem access_token em https://sts.local/oauth/token.", ex.Message);
     }
 
     [Fact]

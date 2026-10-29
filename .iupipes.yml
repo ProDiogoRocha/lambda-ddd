@@ -1,0 +1,94 @@
+# Preencher todos os campos com (Obrigatorio)
+
+project:
+  language: dotnet-core
+
+build:
+  # Obrigatorio
+  version: 10.0.* #  Versao que o projeto sera buildado
+  # Opcional
+  parameters: '--disable-parallel -m:1 --no-self-contained -p:PublishWithAspNetCoreTargetManifest=false -p:RunCodeAnalysis=false'  #  Parametros adicionais para o dotnet build
+  restore-parameters: ''  #  Versao que o projeto sera buildado. Default: ''
+  working-directory: 'app'  #  Diretorio no github que contém a solution ou os projects. Default: '.'
+  solution: 'Itau.LN.App.Bff.Posicao.sln'
+
+unit-tests:
+  directory: 'app' # Diretorio no github que contém a solution ou os projects de tests.
+
+publish:
+  parameters: ''  #  Parametros adicionais para o dotnet publish. Default: ''
+  output-dir: '.'  #  Pasta específica para colocar o resultado do build. Default: '.'
+  deploy-only: ''  #  Deploy do conteudo de uma pasta especifica. Default: ''
+
+infra:
+  terraform:
+    version: "1.5.7" # Versão do Terraform a ser utilizada (iamsr v3.0.0 exige >= 1.4.0)
+    working-directory: 'infra' # Obrigatorio informar o Path de infraestrutura
+    aws-statefile-acl: "private"
+    aws-s3-data-retention: 0
+    aws-s3-data-classification: "Interna"
+    aws-tech-team-email: "jorge.luiz-maria@itau-unibanco.com.br"
+    aws-owner-contact-email: "claudia.dessordi@itau-unibanco.com.br"
+    destroy: "false"
+
+deploy:
+  aws:
+    dev:
+      account: "380271727186"
+      region: "sa-east-1"       # Região utilizada para deploy
+      lambda:
+        application: 'lambda-ln-app-bff-posicao' #Comentário: Nome da função AWS Lambda.
+        strategy: CodeDeployDefault.LambdaAllAtOnce  #Comentário: Estratégia de deployment.
+      #   #Há também uma referência para leitura adicional: https://docs.aws.amazon.com/codedeploy/latest/userguide/deployment-configurations.html
+        alias: "dev"       #Comentário: Alias da Lambda a ser aplicado à estratégia de deployment.
+    hom:
+      account: "673385326085"
+      region: "sa-east-1"       # Região utilizada para deploy
+      lambda:
+        application: 'lambda-ln-app-bff-posicao' #Comentário: Nome da função AWS Lambda.
+        strategy: CodeDeployDefault.LambdaAllAtOnce  #Comentário: Estratégia de deployment.
+      #   #Há também uma referência para leitura adicional: https://docs.aws.amazon.com/codedeploy/latest/userguide/deployment-configurations.html
+        alias: "hom"       #Comentário: Alias da Lambda a ser aplicado à estratégia de deployment.
+    prod:
+      account: "231186687269"
+      region: "sa-east-1"       # Região utilizada para deploy
+      lambda:
+        application: 'lambda-ln-app-bff-posicao' #Comentário: Nome da função AWS Lambda.
+        strategy: CodeDeployDefault.LambdaAllAtOnce  #Comentário: Estratégia de deployment.
+      #   #Há também uma referência para leitura adicional: https://docs.aws.amazon.com/codedeploy/latest/userguide/deployment-configurations.html
+        alias: "prod"       #Comentário: Alias da Lambda a ser aplicado à estratégia de deployment.
+security:
+  fortify:
+    environment-analyse: 'public_cloud'  # Default: 'private_cloud'. Associado a instancia do fortify (Obrigatorio)
+    nome-aws: 'lambda-ln-app-bff-posicao'  # Nome da aplicação no BOH (Obrigatorio)
+    produto-aws: 'posicao'
+    sigla: "LN" # Sigla cadastrada no BOH (Obrigatorio)
+    sigla-app: "LN-L1021" # Sigla app cadastrada no BOH (Obrigatorio)
+
+quality:
+  sonar:
+    language: dotnet-core
+    working-directory: 'app'
+    nugetConfigPath: '.'          # O path que se encontra o arquivo nuget.config
+    parameters: ''                # Parametros adicionais para a análise do Sonar Ex. -Dsonar.projectKey=myproject
+
+taac:
+  dev:
+    failOnError: false ##Em caso de teste com falha, o step do taac apresenta erro(fica vermelho)
+    codebuild:
+      computeType: "BUILD_GENERAL1_SMALL" ##Tipo de maquina codebuild provisionado para executar o teste
+  # Para subir de hom para prod a esteira exige teste integrado (ver tests/testspec-hom.yml).
+  hom:
+    failOnError: false
+    codebuild:
+      computeType: "BUILD_GENERAL1_SMALL"
+
+p4all:
+  dev:
+    failOnError: false ##Em caso de teste com falha, o step do Performance4All apresenta erro (fica vermelho)
+    codebuild:
+      computeType: "BUILD_GENERAL1_SMALL" ##Tipo de máquina codebuild provisionado para executar o teste
+  hom:
+    failOnError: false
+    codebuild:
+      computeType: "BUILD_GENERAL1_SMALL"

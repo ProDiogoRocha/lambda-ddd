@@ -1,0 +1,44 @@
+version: '0.2'
+env:
+  variables:
+    quicktest_id: PREENCHER
+phases:
+  install:
+    runtime-versions:
+      dotnet: "8.0.421"
+  build:
+    commands:
+      - export TZ=America/Sao_Paulo
+      # URL do BFF em dev: domínio/mapping confirmado ou invoke_url do stage dev.
+      - export TAAC_BASE_URL="PREENCHER"
+      - export TAAC_STS_URL="https://des-sts-int.mbi.cloud.ihf/api/oauth/token"
+      # secret com client_id e client_secret do STS para o TAAC (ver CONFIGURACAO.md)
+      - export TAAC_SECRET_NAME="taac/lambda-ln-app-bff-posicao"
+      - export TAAC_API_KEY="1"
+      - export TAAC_CENTRALIZADOR="7619"
+      - export TAAC_POLO="001"
+      - export TAAC_TRANSPORTADORA="56"
+      - >-
+        aws s3api get-object --bucket 049557819541-cacertitau --key caitau.cer
+        /usr/local/share/ca-certificates/caitau.crt
+      - >-
+        aws s3api get-object --bucket 049557819541-cacertitau --key
+        cloud-s0653.cer /usr/local/share/ca-certificates/cloud-s0653.crt
+      - >-
+        aws s3api get-object --bucket 049557819541-cacertitau --key
+        itau-r0650.cer /usr/local/share/ca-certificates/itau-r0650.crt
+      - >-
+        aws s3api get-object --bucket cloudsec-ca-certs-bundle-prod-sa-east-1
+        --key ca_bundle.crt /usr/local/share/ca-certificates/ca_bundle.crt
+      - update-ca-certificates -f
+      - cd tests
+      - cd dev
+      - dotnet restore
+      - dotnet build
+      - >-
+        dotnet test --logger
+        'junit;LogFilePath=junit.xml;MethodFormat=Class;FailureBodyFormat=Verbose'
+artifacts:
+  base-directory: tests/dev
+  files:
+    - junit.xml

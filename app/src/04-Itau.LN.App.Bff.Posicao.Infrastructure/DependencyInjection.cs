@@ -3,8 +3,6 @@ using Itau.LN.App.Bff.Posicao.Application.Interfaces;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Auth;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Clients;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Options;
-using Itau.LN.App.Bff.Posicao.Infrastructure.Repositories;
-using Itau.LN.App.Bff.Posicao.Infrastructure.Secrets;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -17,14 +15,11 @@ public static class DependencyInjection
     {
         services.AddOptions<ApiOptions>().Bind(configuration).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<SecretsOptions>().Bind(configuration.GetSection("Secrets")).ValidateDataAnnotations().ValidateOnStart();
-        // Sem ValidateOnStart: só as rotas de posição usam o RDS.
-        services.AddOptions<RdsOptions>().Bind(configuration.GetSection("RdsConfig")).ValidateDataAnnotations();
 
         services.AddSingleton<IAmazonSecretsManager>(_ => new AmazonSecretsManagerClient());
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IAuthClient, AuthClient>();
-        services.AddSingleton<RdsConnectionProvider>();
-        services.AddScoped<ICredenciaisRepository, CredenciaisRepository>();
+        services.AddSingleton<IChaveUnicaTokenGenerator, ChaveUnicaJwtGenerator>();
 
         services.AddHttpClient<IEcsPosicaoClient, EcsPosicaoClient>((provider, client) =>
         {

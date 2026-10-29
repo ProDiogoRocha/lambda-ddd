@@ -29,7 +29,7 @@ public class EcsPosicaoClientTests
         Assert.Equal(10.5m, detalhe.ValorDivergenciaBloco);
         var request = Assert.Single(http.Requests);
         Assert.Equal(
-            "https://api.local/base/posicaonumerarionacional/v2/custodias-posicoes-historicos-detalhes-consultar?indiceControlePosicao=A%20B",
+            "https://api.local/base/custodias-posicoes-historicos-detalhes-consultar?indiceControlePosicao=A%20B",
             request.RequestUri!.AbsoluteUri);
         Assert.Equal("Bearer token-123", request.Headers.Authorization!.ToString());
         Assert.Equal("api-key", request.Headers.GetValues("x-itau-apikey").Single());
@@ -48,7 +48,7 @@ public class EcsPosicaoClientTests
         var request = Assert.Single(http.Requests);
         Assert.False(request.Headers.Contains("chave-unica"));
         Assert.Equal(
-            "https://api.local/base/posicaonumerarionacional/v2/custodias-posicoes-historicos-listas-consultar?dataMovimento=2026-10-25",
+            "https://api.local/base/custodias-posicoes-historicos-listas-consultar?dataMovimento=2026-10-25",
             request.RequestUri!.AbsoluteUri);
     }
 
@@ -103,6 +103,8 @@ public class EcsPosicaoClientTests
 
         Assert.Equal(HttpStatusCode.BadGateway, ex.StatusCode);
         Assert.Equal(mensagem, ex.Message);
+        // Para o log: método, host e caminho da chamada, sem a query string.
+        Assert.Equal("GET api.local/base/custodias-posicoes-historicos-detalhes-consultar", ex.Destino);
     }
 
     [Fact]
@@ -115,7 +117,7 @@ public class EcsPosicaoClientTests
 
         var request = Assert.Single(http.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal("https://api.local/base/posicaonumerarionacional/v2/custodia-posicoes-cancelamento", request.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://api.local/base/custodia-posicoes-cancelamento", request.RequestUri!.AbsoluteUri);
         Assert.Equal("""{"indiceControlePosicao":"IDX","codigoTipoPosicao":"F"}""", Assert.Single(http.Bodies));
     }
 

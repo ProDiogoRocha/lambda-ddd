@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "LocalRunner",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/app/LocalRunner/bin/Debug/net10.0/LocalRunner.dll",
+            "args": ["GET", "/v1/posicao-transportadores?data=2026-10-27&centralizador=7619&polo=001&transportadora=56"],
+            "cwd": "${workspaceFolder}/app"
+        }
+    ]
+}

@@ -22,7 +22,8 @@ public abstract class BaseApiClient(HttpClient httpClient, IAuthClient authClien
 
         return envelope?.Data is { } data
             ? data
-            : throw new ApiHttpException(HttpStatusCode.InternalServerError, "Resposta inválida da API de destino: payload sem campo data.");
+            : throw new ApiHttpException(
+                HttpStatusCode.InternalServerError, "Resposta inválida da API de destino: payload sem campo data.", Destino(response));
     }
 
     protected async Task PostAsync<TRequest>(string endpoint, TRequest payload, ApiRequestHeaders headers, CancellationToken cancellationToken)
@@ -45,6 +46,7 @@ public abstract class BaseApiClient(HttpClient httpClient, IAuthClient authClien
         }
 
         var response = await httpClient.SendAsync(request, cancellationToken);
+        response.RequestMessage ??= request; // o HttpClient já trocou a URI relativa pela absoluta: é ela que vai para o log
         if (response.IsSuccessStatusCode)
         {
             return response;
@@ -55,9 +57,16 @@ public abstract class BaseApiClient(HttpClient httpClient, IAuthClient authClien
             var error = JsonHelper.DeserializeOrDefault<ErrorBody>(await response.Content.ReadAsStringAsync(cancellationToken));
             throw new ApiHttpException(
                 response.StatusCode,
-                error?.Detalhe ?? error?.Mensagem ?? $"Erro HTTP {(int)response.StatusCode}");
+                error?.Detalhe ?? error?.Mensagem ?? $"Erro HTTP {(int)response.StatusCode}",
+                Destino(response));
         }
     }
+
+    // Método, host e caminho, sem a query string.
+    private static string? Destino(HttpResponseMessage response) =>
+        response.RequestMessage is { RequestUri: { IsAbsoluteUri: true } uri } request
+            ? $"{request.Method} {uri.Host}{uri.AbsolutePath}"
+            : null;
 
     private sealed record DataEnvelope<T>(T? Data)
         where T : class;

@@ -1,8 +1,10 @@
 using Amazon.Lambda.APIGatewayEvents;
 using Amazon.Lambda.Core;
 using Amazon.Lambda.Serialization.SystemTextJson;
+using Itau.LN.App.Bff.Posicao.Infrastructure.Options;
 using Itau.LN.App.Bff.Posicao.Lambda.Handlers;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 [assembly: LambdaSerializer(typeof(DefaultLambdaJsonSerializer))]
 
@@ -13,7 +15,24 @@ public class Function
     // Folga para devolver a resposta antes do timeout da Lambda.
     private static readonly TimeSpan MargemDeEncerramento = TimeSpan.FromSeconds(1);
 
-    private readonly ServiceProvider _provider = DependencyInjectionResolver.Build();
+    private readonly ServiceProvider _provider;
+
+    // Cold start: a configuração já foi validada no Build; o log mostra o que este ambiente carregou.
+    public Function()
+    {
+        _provider = DependencyInjectionResolver.Build();
+
+        var api = _provider.GetRequiredService<IOptions<ApiOptions>>().Value;
+        var secrets = _provider.GetRequiredService<IOptions<SecretsOptions>>().Value;
+        LambdaLogger.Log(
+            LogLevel.Information,
+            "BFF iniciado | ecs={EcsBaseUrl} centralizador={CentralizadorBaseUrl} sts={AuthTokenUrl} secretConsumoApi={SecretConsumoApi} secretChaveUnica={SecretChaveUnica}",
+            api.EcsBaseUrl,
+            api.CentralizadorBaseUrl,
+            api.AuthTokenUrl,
+            secrets.ConsumoApi,
+            secrets.ChaveUnicaJwt);
+    }
 
     public async Task<APIGatewayProxyResponse> FunctionHandler(APIGatewayProxyRequest request, ILambdaContext context)
     {

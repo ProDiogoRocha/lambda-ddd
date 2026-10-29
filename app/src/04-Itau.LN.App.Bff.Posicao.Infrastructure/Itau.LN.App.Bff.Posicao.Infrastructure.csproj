@@ -8,10 +8,8 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.SecretsManager" Version="4.0.100.21" />
-    <PackageReference Include="Dapper" Version="2.1.89" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.14" />
     <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" Version="10.0.14" />
-    <PackageReference Include="MySqlConnector" Version="2.6.2" />
   </ItemGroup>
 
   <ItemGroup>

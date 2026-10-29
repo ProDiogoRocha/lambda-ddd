@@ -61,14 +61,21 @@ public sealed class AuthClient(
             ["grant_type"] = "client_credentials"
         });
 
-        using var response = await httpClientFactory.CreateClient()
-            .PostAsync(apiOptions.Value.AuthTokenUrl, content, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        var stsUrl = apiOptions.Value.AuthTokenUrl;
+        using var response = await httpClientFactory.CreateClient().PostAsync(stsUrl, content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            // O corpo de erro do OAuth (ex.: invalid_client) diz o motivo e não traz segredo.
+            throw new HttpRequestException(
+                $"STS recusou o token em {stsUrl}: HTTP {(int)response.StatusCode} {await response.Content.ReadAsStringAsync(cancellationToken)}",
+                null,
+                response.StatusCode);
+        }
 
         var token = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken);
         if (string.IsNullOrWhiteSpace(token?.AccessToken))
         {
-            throw new InvalidOperationException("Token não retornado pela API.");
+            throw new InvalidOperationException($"STS respondeu sem access_token em {stsUrl}.");
         }
 
         // Renova 60s antes de expirar; com expires_in curto, na metade da validade.

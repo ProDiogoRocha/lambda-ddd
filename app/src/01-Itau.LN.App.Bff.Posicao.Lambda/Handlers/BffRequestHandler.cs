@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -24,58 +25,112 @@ public sealed class BffRequestHandler(
     private const string PosicaoTransportadores = "posicao-transportadores";
     private const string Centralizadores = "centralizadores";
 
+    // Uma linha de log por requisição (ver RegistrarRequisicao), com o motivo de qualquer resposta de erro.
+    private const string Resumo =
+        "{Metodo} {Path} -> {Status} em {DuracaoMs} ms | correlationId={CorrelationId} centralizador={Centralizador} polo={Polo} transportadora={Transportadora}";
+
     public async Task<APIGatewayProxyResponse> HandleAsync(
         APIGatewayProxyRequest request, ILambdaContext context, CancellationToken cancellationToken)
     {
+        var inicio = Stopwatch.GetTimestamp();
+        Exception? erro = null;
+        APIGatewayProxyResponse response;
         try
         {
-            var apiKey = GetHeader(request, HeaderNames.ApiKey);
-            var correlationId = GetHeader(request, HeaderNames.CorrelationId);
-            if (apiKey is null || correlationId is null)
-            {
-                return Error(HttpStatusCode.BadRequest, "Headers obrigatorios ausentes: x-itau-apikey e x-itau-correlationID.");
-            }
-
-            // Centralizadores não recebem chave-unica.
-            var headers = new ApiRequestHeaders(apiKey, correlationId, string.Empty);
-
-            // Só resolvida depois que a rota casa e a entrada é validada: evita idas ao centralizador e ao banco em 400/404.
-            Task<ApiRequestHeaders> HeadersPosicao() => ComChaveUnicaAsync(request, headers, cancellationToken);
-
-            return (request.HttpMethod?.ToUpperInvariant(), GetRouteSegments(request.Path)) switch
-            {
-                ("GET", [PosicaoTransportadores]) =>
-                    await ConsultarCardsAsync(request, HeadersPosicao, cancellationToken),
-                ("POST", [PosicaoTransportadores, var indice, "reverter"]) =>
-                    await ReverterFechamentoAsync(indice, request.Body, HeadersPosicao, cancellationToken),
-                ("GET", [PosicaoTransportadores, var indice, "justificativa-divergencias"]) =>
-                    Ok(await posicaoService.ConsultarDivergenciasAsync(indice, await HeadersPosicao(), cancellationToken)),
-                ("GET", [PosicaoTransportadores, var indice, "justificativa-termo-juridico"]) =>
-                    Ok(await posicaoService.ConsultarTermoJuridicoAsync(indice, await HeadersPosicao(), cancellationToken)),
-                ("GET", [Centralizadores, var numero]) =>
-                    Ok(await centralizadoresClient.GetCentralizadorAsync(numero, headers, cancellationToken)),
-                ("GET", [Centralizadores, var numero, "fornecedores", var fornecedorId]) =>
-                    Ok(await centralizadoresClient.GetFornecedorAsync(numero, fornecedorId, headers, cancellationToken)),
-                ("GET", [Centralizadores, var numero, "fornecedores", var fornecedorId, "bases", var baseId]) =>
-                    Ok(await centralizadoresClient.GetFornecedorInBaseAsync(numero, fornecedorId, baseId, headers, cancellationToken)),
-                ("GET", [Centralizadores, var numero, "polos", var poloId]) =>
-                    Ok(await centralizadoresClient.GetPoloAsync(numero, poloId, headers, cancellationToken)),
-                _ => Error(HttpStatusCode.NotFound, "Recurso inexistente.")
-            };
+            response = await RotearAsync(request, cancellationToken);
         }
         catch (ApiHttpException ex) when (ex.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
         {
-            return Error(ex.StatusCode, ex.Message);
+            (response, erro) = (Error(ex.StatusCode, ex.Message), ex);
         }
         catch (ApiHttpException ex)
         {
-            context.Logger.LogError(ex, "Erro HTTP {StatusCode} na API de destino.", (int)ex.StatusCode);
-            return Error(HttpStatusCode.InternalServerError, ex.Message);
+            (response, erro) = (Error(HttpStatusCode.InternalServerError, ex.Message), ex);
         }
         catch (Exception ex)
         {
-            context.Logger.LogError(ex, "Erro inesperado no runtime BFF.");
-            return Error(HttpStatusCode.InternalServerError, "Erro interno.");
+            (response, erro) = (Error(HttpStatusCode.InternalServerError, "Erro interno."), ex);
+        }
+
+        RegistrarRequisicao(context.Logger, request, response.StatusCode, erro, Stopwatch.GetElapsedTime(inicio));
+        return response;
+    }
+
+    // Toda resposta de erro sai como ApiHttpException, para o motivo chegar ao log.
+    private async Task<APIGatewayProxyResponse> RotearAsync(APIGatewayProxyRequest request, CancellationToken cancellationToken)
+    {
+        var apiKey = GetHeader(request, HeaderNames.ApiKey);
+        var correlationId = GetHeader(request, HeaderNames.CorrelationId);
+        if (apiKey is null || correlationId is null)
+        {
+            throw new ApiHttpException(HttpStatusCode.BadRequest, "Headers obrigatorios ausentes: x-itau-apikey e x-itau-correlationID.");
+        }
+
+        // Centralizadores não recebem chave-unica.
+        var headers = new ApiRequestHeaders(apiKey, correlationId, string.Empty);
+
+        // Só resolvida depois que a rota casa e a entrada é validada: evita idas ao centralizador em 400/404.
+        Task<ApiRequestHeaders> HeadersPosicao() => ComChaveUnicaAsync(request, headers, cancellationToken);
+
+        return (request.HttpMethod?.ToUpperInvariant(), GetRouteSegments(request.Path)) switch
+        {
+            ("GET", [PosicaoTransportadores]) =>
+                await ConsultarCardsAsync(request, HeadersPosicao, cancellationToken),
+            ("POST", [PosicaoTransportadores, var indice, "reverter"]) =>
+                await ReverterFechamentoAsync(indice, request.Body, HeadersPosicao, cancellationToken),
+            ("GET", [PosicaoTransportadores, var indice, "justificativa-divergencias"]) =>
+                Ok(await posicaoService.ConsultarDivergenciasAsync(indice, await HeadersPosicao(), cancellationToken)),
+            ("GET", [PosicaoTransportadores, var indice, "justificativa-termo-juridico"]) =>
+                Ok(await posicaoService.ConsultarTermoJuridicoAsync(indice, await HeadersPosicao(), cancellationToken)),
+            ("GET", [Centralizadores, var numero]) =>
+                Ok(await centralizadoresClient.GetCentralizadorAsync(numero, headers, cancellationToken)),
+            ("GET", [Centralizadores, var numero, "fornecedores", var fornecedorId]) =>
+                Ok(await centralizadoresClient.GetFornecedorAsync(numero, fornecedorId, headers, cancellationToken)),
+            ("GET", [Centralizadores, var numero, "fornecedores", var fornecedorId, "bases", var baseId]) =>
+                Ok(await centralizadoresClient.GetFornecedorInBaseAsync(numero, fornecedorId, baseId, headers, cancellationToken)),
+            ("GET", [Centralizadores, var numero, "polos", var poloId]) =>
+                Ok(await centralizadoresClient.GetPoloAsync(numero, poloId, headers, cancellationToken)),
+            _ => throw new ApiHttpException(HttpStatusCode.NotFound, "Recurso inexistente.")
+        };
+    }
+
+    // Sucesso => Information; 4xx => Warning com o motivo; 5xx => Error com a exceção (stack trace).
+    // Em erro de API de destino, também qual chamada falhou e o status que ela devolveu.
+    // Nunca logar x-itau-apikey, Authorization, chave-unica nem bodies.
+    private static void RegistrarRequisicao(
+        ILambdaLogger logger, APIGatewayProxyRequest request, int status, Exception? erro, TimeSpan duracao)
+    {
+        object[] campos =
+        [
+            request.HttpMethod ?? "-",
+            request.Path ?? "-",
+            status,
+            (long)duracao.TotalMilliseconds,
+            GetHeader(request, HeaderNames.CorrelationId) ?? "-",
+            GetQueryParameter(request, "centralizador") ?? "-",
+            GetQueryParameter(request, "polo") ?? "-",
+            GetQueryParameter(request, "transportadora") ?? "-"
+        ];
+
+        if (erro is null)
+        {
+            logger.LogInformation(Resumo, campos);
+            return;
+        }
+
+        const string ResumoComErro = Resumo + " | destino={Destino} statusDestino={StatusDestino} | {Mensagem}";
+        object[] destino = erro is ApiHttpException { Destino: { } chamada } apiErro
+            ? [chamada, (int)apiErro.StatusCode]
+            : ["-", "-"];
+        object[] camposComErro = [.. campos, .. destino, erro.Message];
+
+        if (status < 500)
+        {
+            logger.LogWarning(ResumoComErro, camposComErro);
+        }
+        else
+        {
+            logger.LogError(erro, ResumoComErro, camposComErro);
         }
     }
 
@@ -85,12 +140,12 @@ public sealed class BffRequestHandler(
         var data = GetQueryParameter(request, "data");
         if (string.IsNullOrWhiteSpace(data))
         {
-            return Error(HttpStatusCode.BadRequest, "Parametro obrigatorio ausente: data.");
+            throw new ApiHttpException(HttpStatusCode.BadRequest, "Parametro obrigatorio ausente: data.");
         }
 
         if (!DateOnly.TryParseExact(data, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
         {
-            return Error(HttpStatusCode.BadRequest, "Parametro data invalido. Utilize o formato yyyy-MM-dd.");
+            throw new ApiHttpException(HttpStatusCode.BadRequest, "Parametro data invalido. Utilize o formato yyyy-MM-dd.");
         }
 
         var cards = await posicaoService.ConsultarCardsAsync(data, await headers(), cancellationToken);
@@ -103,14 +158,14 @@ public sealed class BffRequestHandler(
         var payload = JsonHelper.DeserializeOrDefault<ReverterFechamentoRequest>(body);
         if (string.IsNullOrWhiteSpace(payload?.CodigoTipoPosicao))
         {
-            return Error(HttpStatusCode.BadRequest, "Campo obrigatorio ausente no body: codigoTipoPosicao.");
+            throw new ApiHttpException(HttpStatusCode.BadRequest, "Campo obrigatorio ausente no body: codigoTipoPosicao.");
         }
 
         await posicaoService.ReverterFechamentoAsync(indiceControlePosicao, payload.CodigoTipoPosicao, await headers(), cancellationToken);
         return Ok(new ReverterFechamentoResponse(true, "Reversao realizada com sucesso", indiceControlePosicao));
     }
 
-    // A chave-unica vem sempre do RDS, sem fallback; um header chave-unica do front é ignorado.
+    // A chave-unica é sempre o JWT gerado aqui, sem fallback; um header chave-unica do front é ignorado.
     private async Task<ApiRequestHeaders> ComChaveUnicaAsync(
         APIGatewayProxyRequest request, ApiRequestHeaders headers, CancellationToken cancellationToken)
     {

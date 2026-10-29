@@ -3,3 +3,5 @@ obj/
 .vs/
 TestResults/
 *.user
+appsettings.Local.json
+junit.xml
