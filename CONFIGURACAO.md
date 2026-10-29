@@ -28,7 +28,7 @@ Hom usa `inventories/hom` (branch `release/*`), prod usa `inventories/prod` (PR 
 | `AUTH_TOKEN_URL` | tfvars do ambiente | `ApiOptions` → `AuthClient` (token STS) |
 | `CORS_ALLOWED_ORIGIN` | tfvars do ambiente | `BffOptions` → header CORS das respostas |
 | `Secrets__ConsumoApi` | `locals.tf` (nome fixo) | `SecretsOptions` → `AuthClient` |
-| `Secrets__ChaveUnicaJwt` | `locals.tf` (nome fixo) | `SecretsOptions` → `ChaveUnicaJwtGenerator` |
+| `CHAVE_UNICA_CERTIFICADO` | não definida: vale `Certificados/ca_bundle.crt` (tfvars só se mudar) | `ChaveUnicaOptions` → `ChaveUnicaJwtGenerator` (ver `Certificados/LEIA-ME.md` no projeto Lambda) |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | `locals.tf` | o próprio .NET (certificados das CAs do banco, da layer) |
 | `AWS_LAMBDA_HANDLER_LOG_FORMAT` (`Json`), `AWS_LAMBDA_HANDLER_LOG_LEVEL` | `locals.tf` (o nível vem da variável `application_log_level`) | o runtime .NET da Lambda (formato e nível dos logs; ver "Logs" no Readme da Lambda) |
 | `ECS_TIMEOUT_SECONDS`, `CENTRALIZADOR_TIMEOUT_SECONDS`, `API_BASE_PATH`, `BFF_DEFAULT_OPERADOR` | não definidas: valem os padrões (30, 30, `/v1`, `NA`) | `ApiOptions`, `BffOptions`, `PosicaoOptions` |
@@ -45,11 +45,16 @@ Faltando URL obrigatória (ou com `PREENCHER`), a Lambda nem sobe: o erro aparec
 Console AWS → Secrets Manager → *Store a new secret* → *Other type of secret*:
 
 1. Nome `lambda-ln-app-bff-posicao/consumo-api`, aba *Key/value*: chave `client_id` e chave `client_secret` (os valores do STS do BFF).
-2. Nome `lambda-ln-app-bff-posicao/chave-unica-jwt`, aba *Plaintext*: o mesmo segredo HS256 que o ECS usa para validar a `chave-unica` (vem do Hugo). Melhor ele mesmo gravar no console de cada conta, para o segredo não trafegar por chat. Sem esse valor, a rota de posição responde erro.
-
-3. Só em dev e hom (onde o TAAC roda): nome `taac/lambda-ln-app-bff-posicao`, aba *Key/value*: `client_id` e `client_secret` de um client do STS que possa chamar o API Gateway do BFF. O TAAC pega um token STS com ele, como a lambda de referência.
+2. Só em dev e hom (onde o TAAC roda): nome `taac/lambda-ln-app-bff-posicao`, aba *Key/value*: `client_id` e `client_secret` de um client do STS que possa chamar o API Gateway do BFF. O TAAC pega um token STS com ele, como a lambda de referência.
 
 Se a secret do STS já existir com outro nome, não precisa criar: sobrescreva na tfvars do ambiente, dentro de `environment_variables`: `Secrets__ConsumoApi = "nome-existente"`.
+
+## Certificado da chave-unica (sem secret)
+
+A `chave-unica` é assinada em HS256 com os bytes do `ca_bundle.crt` que vai junto no pacote da Lambda (decisão do
+tech lead em 29/10/2026). Coloque o arquivo baixado em `app/src/01-Itau.LN.App.Bff.Posicao.Lambda/Certificados/ca_bundle.crt`
+no repositório do Itaú e commite, sem abrir em editor. O ECS valida com o mesmo arquivo: confira o `certificadoSha256`
+do log `BFF iniciado` com o hash do arquivo do ECS. Detalhes em `Certificados/LEIA-ME.md`.
 
 ## Ordem do primeiro deploy
 

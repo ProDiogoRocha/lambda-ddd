@@ -1,0 +1,2 @@
+# O conteúdo do .crt é a chave HS256 da chave-unica: o git não pode trocar LF por CRLF (mudaria a assinatura).
+*.crt -text

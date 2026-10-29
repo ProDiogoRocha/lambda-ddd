@@ -2,29 +2,25 @@ using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Amazon.SecretsManager;
 using Itau.LN.App.Bff.Posicao.Application.Interfaces;
 using Itau.LN.App.Bff.Posicao.Infrastructure.Options;
-using Itau.LN.App.Bff.Posicao.Infrastructure.Secrets;
 using Microsoft.Extensions.Options;
 
 namespace Itau.LN.App.Bff.Posicao.Infrastructure.Auth;
 
-// Singleton: a chave-unica do ECS é um JWT HS256 com a transportadora e a filial, no formato do token que o ECS já aceita
-// (claims em snake_case, valores em texto). iat/exp a mais limitam o reuso de um token vazado a 5 minutos.
-// HS256 = assinatura com segredo compartilhado com o ECS (sem certificado); o segredo vem do Secrets Manager e fica em cache.
-public sealed class ChaveUnicaJwtGenerator(
-    IAmazonSecretsManager secretsManager,
-    IOptions<SecretsOptions> secretsOptions,
-    TimeProvider timeProvider) : IChaveUnicaTokenGenerator
+// Singleton: a chave-unica do ECS é um JWT HS256 cuja chave são os bytes do ca_bundle.crt empacotado na Lambda
+// (pasta Certificados do projeto Lambda); o ECS valida com o mesmo arquivo. Decisão do tech lead em 29/10/2026.
+// O ca_bundle.crt é público na organização: quem tiver o arquivo consegue gerar uma chave-unica válida.
+// Claims em snake_case e valores em texto, como no token que o ECS já aceita; iat/exp limitam o reuso a 5 minutos.
+public sealed class ChaveUnicaJwtGenerator(IOptions<ChaveUnicaOptions> options, TimeProvider timeProvider) : IChaveUnicaTokenGenerator
 {
     private static readonly TimeSpan Validade = TimeSpan.FromMinutes(5);
     private static readonly string Header = Base64Url.EncodeToString("""{"alg":"HS256","typ":"JWT"}"""u8);
-    private byte[]? _chaveDeAssinatura;
+    private byte[]? _chave;
 
-    public async Task<string> GerarAsync(string codigoTransportadora, string codigoFilial, CancellationToken cancellationToken)
+    public Task<string> GerarAsync(string codigoTransportadora, string codigoFilial, CancellationToken cancellationToken)
     {
-        _chaveDeAssinatura ??= await ObterChaveDeAssinaturaAsync(cancellationToken);
+        _chave ??= LerChave(options.Value);
 
         var agora = timeProvider.GetUtcNow();
         var payload = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object>
@@ -36,19 +32,23 @@ public sealed class ChaveUnicaJwtGenerator(
         });
 
         var conteudo = $"{Header}.{Base64Url.EncodeToString(payload)}";
-        var assinatura = HMACSHA256.HashData(_chaveDeAssinatura, Encoding.ASCII.GetBytes(conteudo));
+        var assinatura = HMACSHA256.HashData(_chave, Encoding.ASCII.GetBytes(conteudo));
 
-        return $"{conteudo}.{Base64Url.EncodeToString(assinatura)}";
+        return Task.FromResult($"{conteudo}.{Base64Url.EncodeToString(assinatura)}");
     }
 
-    private async Task<byte[]> ObterChaveDeAssinaturaAsync(CancellationToken cancellationToken)
+    // Bytes exatos do arquivo, sem trim nem conversão de texto: qualquer diferença com o arquivo do ECS invalida a assinatura.
+    private static byte[] LerChave(ChaveUnicaOptions opcoes)
     {
-        var secretName = secretsOptions.Value.ChaveUnicaJwt;
-        if (string.IsNullOrWhiteSpace(secretName))
+        var caminho = Path.Combine(AppContext.BaseDirectory, opcoes.Certificado);
+        if (!File.Exists(caminho))
         {
-            throw new InvalidOperationException("Secret de assinatura da chave-unica não configurada (Secrets__ChaveUnicaJwt).");
+            throw new InvalidOperationException(
+                $"Certificado da chave-unica não encontrado em {caminho}: coloque o ca_bundle.crt na pasta Certificados do projeto Lambda.");
         }
 
-        return Encoding.UTF8.GetBytes(await secretsManager.GetSecretStringAsync(secretName, cancellationToken));
+        return File.ReadAllBytes(caminho) is { Length: > 0 } chave
+            ? chave
+            : throw new InvalidOperationException($"Certificado da chave-unica vazio em {caminho}: uma chave vazia não protege a assinatura.");
     }
 }

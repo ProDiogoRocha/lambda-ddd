@@ -20,6 +20,11 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.14" />
   </ItemGroup>
 
+  <!-- ca_bundle.crt que assina a chave-unica: vai no pacote da Lambda (/var/task/Certificados). Ver Certificados/LEIA-ME.md. -->
+  <ItemGroup>
+    <None Update="Certificados\*.crt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\02-Itau.LN.App.Bff.Posicao.Application\Itau.LN.App.Bff.Posicao.Application.csproj" />
     <ProjectReference Include="..\04-Itau.LN.App.Bff.Posicao.Infrastructure\Itau.LN.App.Bff.Posicao.Infrastructure.csproj" />

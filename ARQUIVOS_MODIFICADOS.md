@@ -2,6 +2,31 @@
 
 O que copiar para o repositório do Itaú. "removido" = apagar lá.
 
+## Rodada 29/10: chave-unica assinada com o ca_bundle.crt (HS256, sem secret)
+
+Decisão do tech lead: a chave HS256 são os bytes do `ca_bundle.crt` empacotado na Lambda; o ECS valida com o mesmo arquivo.
+
+| Path | Situação |
+|---|---|
+| `app/src/01-Itau.LN.App.Bff.Posicao.Lambda/Certificados/LEIA-ME.md` | novo: qual arquivo colocar e como conferir com o ECS |
+| `app/src/01-Itau.LN.App.Bff.Posicao.Lambda/Certificados/.gitattributes` | novo: git não converte as quebras de linha do `.crt` (mudariam a chave) |
+| `app/src/01-Itau.LN.App.Bff.Posicao.Lambda/Certificados/ca_bundle.crt` | **você coloca no Itaú**, sem abrir em editor, e commita lá |
+| `app/src/01-Itau.LN.App.Bff.Posicao.Lambda/Itau.LN.App.Bff.Posicao.Lambda.csproj` | alterado: empacota `Certificados/*.crt` na Lambda |
+| `app/src/01-Itau.LN.App.Bff.Posicao.Lambda/Function.cs` | alterado: log `BFF iniciado` mostra o caminho do certificado e o `certificadoSha256` |
+| `app/src/01-Itau.LN.App.Bff.Posicao.Lambda/Readme.md` | alterado |
+| `app/src/04-Itau.LN.App.Bff.Posicao.Infrastructure/Auth/ChaveUnicaJwtGenerator.cs` | alterado: HS256 com os bytes do arquivo |
+| `app/src/04-Itau.LN.App.Bff.Posicao.Infrastructure/Options/ChaveUnicaOptions.cs` | novo: `CHAVE_UNICA_CERTIFICADO` |
+| `app/src/04-Itau.LN.App.Bff.Posicao.Infrastructure/Options/SecretsOptions.cs` | alterado: sai `ChaveUnicaJwt` |
+| `app/src/04-Itau.LN.App.Bff.Posicao.Infrastructure/DependencyInjection.cs` | alterado: registra `ChaveUnicaOptions` |
+| `app/test/Itau.LN.App.Bff.Posicao.Tests/Auth/ChaveUnicaJwtGeneratorTests.cs` | alterado |
+| `app/test/Itau.LN.App.Bff.Posicao.Tests/Handlers/ChaveUnicaPontaAPontaTests.cs` | alterado (confere a assinatura com o mesmo arquivo) |
+| `app/test/Itau.LN.App.Bff.Posicao.Tests/Handlers/BffRequestHandlerTests.cs` | alterado (texto de um teste) |
+| `infra/locals.tf` | alterado: sai `Secrets__ChaveUnicaJwt` |
+| `app/LocalRunner/appsettings.json` | alterado: sai `Secrets__ChaveUnicaJwt` |
+| `CONFIGURACAO.md` | alterado: sem a secret `chave-unica-jwt`; seção do certificado |
+
+A secret `lambda-ln-app-bff-posicao/chave-unica-jwt` deixou de existir: não precisa criar.
+
 ## Aplicação
 
 ### 01-Lambda
@@ -89,5 +114,5 @@ ambiente antes de copiá-lo. Falta conferir `permissions.json` e a etapa de impo
 OpenAPI do workflow do banco.
 
 
-Validação na retomada: 106 testes unitários aprovados, 100% das linhas e 98,4% dos
-branches. TAAC compilado sem avisos; os testes integrados precisam do ambiente Itaú.
+Validação na rodada do certificado: 107 testes unitários aprovados; `dotnet publish` confirmou
+`Certificados/ca_bundle.crt` no pacote, byte a byte. TAAC compilado sem avisos; os testes integrados precisam do ambiente Itaú.

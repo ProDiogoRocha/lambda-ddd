@@ -295,7 +295,7 @@ public class BffRequestHandlerTests
     [Fact]
     public async Task ChaveUnica_ComFalhaAoAssinarOJwt_Retorna500Generico()
     {
-        _tokens.GerarAsync(default!, default!, default).ThrowsAsyncForAnyArgs(new InvalidOperationException("Secrets Manager fora"));
+        _tokens.GerarAsync(default!, default!, default).ThrowsAsyncForAnyArgs(new InvalidOperationException("Certificado da chave-unica não encontrado"));
 
         var response = await HandleAsync(Request("GET", RotaTermo));
 

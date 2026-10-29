@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Amazon.Lambda.APIGatewayEvents;
 using Amazon.Lambda.Core;
 using Amazon.Lambda.Serialization.SystemTextJson;
@@ -24,14 +25,18 @@ public class Function
 
         var api = _provider.GetRequiredService<IOptions<ApiOptions>>().Value;
         var secrets = _provider.GetRequiredService<IOptions<SecretsOptions>>().Value;
+        var certificado = Path.Combine(
+            AppContext.BaseDirectory, _provider.GetRequiredService<IOptions<ChaveUnicaOptions>>().Value.Certificado);
+        // O SHA-256 identifica o arquivo sem expor o conteúdo: tem que ser igual ao do arquivo usado pelo ECS.
         LambdaLogger.Log(
             LogLevel.Information,
-            "BFF iniciado | ecs={EcsBaseUrl} centralizador={CentralizadorBaseUrl} sts={AuthTokenUrl} secretConsumoApi={SecretConsumoApi} secretChaveUnica={SecretChaveUnica}",
+            "BFF iniciado | ecs={EcsBaseUrl} centralizador={CentralizadorBaseUrl} sts={AuthTokenUrl} secretConsumoApi={SecretConsumoApi} certificadoChaveUnica={CertificadoChaveUnica} certificadoSha256={CertificadoSha256}",
             api.EcsBaseUrl,
             api.CentralizadorBaseUrl,
             api.AuthTokenUrl,
             secrets.ConsumoApi,
-            secrets.ChaveUnicaJwt);
+            certificado,
+            File.Exists(certificado) ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(certificado))) : "ausente");
     }
 
     public async Task<APIGatewayProxyResponse> FunctionHandler(APIGatewayProxyRequest request, ILambdaContext context)

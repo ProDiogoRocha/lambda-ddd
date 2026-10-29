@@ -62,9 +62,9 @@ locals {
     "DD_TRACE_ENABLED"              = "true",
     "DD_CAPTURE_LAMBDA_PAYLOAD"     = "true",
     "AWS_LAMBDA_EXEC_WRAPPER"       = "/opt/datadog_wrapper",
-    # Nomes das secrets no Secrets Manager (cada ambiente é uma conta, então o nome é o mesmo). Ver CONFIGURACAO.md.
-    "Secrets__ConsumoApi"    = "${local.microservice_name}/consumo-api",
-    "Secrets__ChaveUnicaJwt" = "${local.microservice_name}/chave-unica-jwt",
+    # Nome da secret do STS no Secrets Manager (cada ambiente é uma conta, então o nome é o mesmo). Ver CONFIGURACAO.md.
+    # A chave-unica é assinada com o certificado empacotado na Lambda (app/.../Certificados), não com secret.
+    "Secrets__ConsumoApi" = "${local.microservice_name}/consumo-api",
     # O .NET (e o Go da extensão do Datadog) carrega o SSL_CERT_FILE e todos os arquivos de cada pasta do SSL_CERT_DIR.
     # Arquivo na raiz da layer (versões novas) ou em /opt/certs (versões antigas): os dois caminhos ficam cobertos,
     # e /etc/pki/tls/certs mantém as CAs públicas (Secrets Manager e demais serviços AWS).

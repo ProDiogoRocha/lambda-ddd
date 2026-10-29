@@ -15,6 +15,8 @@ public static class DependencyInjection
     {
         services.AddOptions<ApiOptions>().Bind(configuration).ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<SecretsOptions>().Bind(configuration.GetSection("Secrets")).ValidateDataAnnotations().ValidateOnStart();
+        // Sem ValidateOnStart: só as rotas de posição assinam a chave-unica; sem certificado os centralizadores seguem funcionando.
+        services.AddOptions<ChaveUnicaOptions>().Bind(configuration);
 
         services.AddSingleton<IAmazonSecretsManager>(_ => new AmazonSecretsManagerClient());
         services.AddSingleton(TimeProvider.System);
